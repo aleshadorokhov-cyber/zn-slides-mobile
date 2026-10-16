@@ -261,6 +261,14 @@ const Check = (() => {
           <div class="tx"><div><b></b> <small class="fld-name"></small></div><small class="ctx"></small><small class="src"></small></div></div>`);
         $('b', el).textContent = n.raw; $('.fld-name', el).textContent = '· ' + n.field;
         $('.ctx', el).textContent = n.ctx; $('.src', el).textContent = source(n);
+        // число из материалов доклада — «📄 В документе»: предложение или строка таблицы с ним выделены цветом (1.7.2)
+        const view = (state.spec.meta || {}).view;
+        if (view && n.src && n.where && ['ok', 'rounded', 'derived'].includes(n.status)) {
+          const b = h('<button class="btn ghost small doc-open" type="button">📄 В документе</button>');
+          b.addEventListener('click', () => DocView.open({view, src: n.src}, n.row !== undefined
+            ? [n.row, n.found].filter(x => String(x || '').replace(/[^0-9a-zа-яё]/gi, '').length >= 3) : [n.where]));
+          $('.tx', el).appendChild(b);
+        }
         (n.similar || []).forEach((x, j) => {
           const sim = h('<div class="sim"><small></small></div>');
           $('small', sim).textContent = `В материалах есть ${x.found} — ${where(x)}`;

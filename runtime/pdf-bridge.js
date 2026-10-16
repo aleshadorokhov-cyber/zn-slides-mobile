@@ -224,6 +224,39 @@ self.znPdf = (() => {
     } finally { P.FPDFBitmap_Destroy(bm); }
   }
 
+  /* рамки куска текста страницы (символы s … s+n) — для выделения фразы в PDF (1.7.2): [[left, bottom, right, top]] */
+  function textRects(id, i, s, n) {
+    const tp = P.FPDFText_LoadPage(page(id, i)), out = [], mem = malloc(32);
+    try {
+      const c = tp ? P.FPDFText_CountRects(tp, s, n) : 0;
+      for (let k = 0; k < c; k++) {
+        if (P.FPDFText_GetRect(tp, k, mem, mem + 8, mem + 16, mem + 24)) out.push([f64(mem), f64(mem + 24), f64(mem + 16), f64(mem + 8)]);
+      }
+    } finally { free(mem); if (tp) P.FPDFText_ClosePage(tp); }
+    return JSON.stringify(out);
+  }
+  /* копия документа с выделениями-примечаниями: [{p: страница, c: [R, G, B, A], q: [[x1 … y4]], r: [l, t, r, b]}] → байты */
+  function saveHighlights(id, json) {
+    const d = docs.get(id), list = JSON.parse(json || '[]'), mem = malloc(64);
+    try {
+      for (const a of list) {
+        const an = P.FPDFPage_CreateAnnot(page(id, a.p), 9);           // FPDF_ANNOT_HIGHLIGHT
+        if (!an) continue;
+        try {
+          P.FPDFAnnot_SetColor(an, 0, a.c[0], a.c[1], a.c[2], a.c[3]);
+          for (const q of a.q) { q.forEach((v, j) => { M().HEAPF32[(mem >> 2) + j] = v; }); P.FPDFAnnot_AppendAttachmentPoints(an, mem); }
+          if (a.r) { a.r.forEach((v, j) => { M().HEAPF32[(mem >> 2) + 8 + j] = v; }); P.FPDFAnnot_SetRect(an, mem + 32); }
+        } finally { P.FPDFPage_CloseAnnot(an); }
+      }
+    } finally { free(mem); }
+    const w = P.PDFiumExt_OpenFileWriter();
+    try {
+      if (!P.PDFiumExt_SaveAsCopy(d.doc, w)) throw new Error('PDF не сохраняется');
+      const n = P.PDFiumExt_GetFileWriterSize(w), b = malloc(n || 1);
+      try { P.PDFiumExt_GetFileWriterData(w, b, n); return M().HEAPU8.slice(b, b + n); } finally { free(b); }
+    } finally { P.PDFiumExt_CloseFileWriter(w); }
+  }
+
   return {load, ready: () => !!P, open, close, pageCount, pageSize, closePage, meta,
-    pageText, pagePaths, pageAnnots, pageImages, imageData, imageBitmap};
+    pageText, pagePaths, pageAnnots, pageImages, imageData, imageBitmap, textRects, saveHighlights};
 })();

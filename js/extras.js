@@ -144,10 +144,17 @@ const Phrases = (() => {
       const tg = targets(s);
       (items || []).forEach(f => {
         const on = has(s, f.t);
-        const row = h(`<div class="phr-item${on ? ' on' : ''}"><div class="t"></div><small></small><div class="ex-row"></div></div>`);
+        const doc = DocView.source(f), i = items.indexOf(f);
+        const row = h(`<div class="phr-item${on ? ' on' : ''}"><div class="t${doc ? ' ph-link' : ''}"${doc ? ' role="button" tabindex="0"' : ''}></div><small></small><div class="ex-row"></div></div>`);
         $('.t', row).textContent = f.t;
+        if (doc) $('.t', row).addEventListener('click', () => DocView.openPhrase(items, i));
         $('small', row).textContent = [f.lib ? '📚 библиотека' : '', f.src || '', f.sec && f.sec !== f.src ? f.sec : ''].filter(Boolean).join(' · ') + (f.num && f.lib ? ' · ⚠ есть числа: числа на слайдах — только из материалов доклада' : '');
         const btns = $('.ex-row', row);
+        if (doc) {
+          const d = h('<button type="button" class="doc-open">📄 В документе</button>');
+          d.addEventListener('click', () => DocView.openPhrase(items, i));
+          btns.appendChild(d);
+        }
         if (on) btns.appendChild(h('<span class="hint" style="margin:0">✓ на слайде</span>'));
         else tg.concat([['notes', '+ в заметки']]).forEach(([w, l]) => {
           const b = h('<button type="button"></button>'); b.textContent = l;
@@ -177,6 +184,138 @@ const Phrases = (() => {
   // подсказки движка написаны для Windows («окно «⚙ Модель ИИ»») — на телефоне это «Ещё» → «Модель ИИ»
   const phoneNote = t => String(t).replace(/в окне «⚙ Модель ИИ»/g, 'в «Ещё» → «Модель ИИ» → «Модели поиска и названий»');
   return {el, phoneNote};
+})();
+
+/* ---------------------------------------------------------------- фраза в документе (1.7.2)
+   Нажатие на найденную фразу или «📄 В документе» открывает документ, из которого она взята: заголовки, абзацы,
+   списки и таблицы, а фраза выделена жёлтым (другие найденные из того же документа — голубым), ▲ ▼ — к соседнему
+   месту. У Word и PDF есть копия самого файла с теми же выделениями — её можно открыть в Word, «Файлах» или почте. */
+const DocView = (() => {
+  const D = {req: null, res: null, cur: 0, marks: [], sh: null};
+  function source(f) {
+    if (f.lib) return f.lid ? {lib: f.lid} : null;
+    const v = ((state.spec || {}).meta || {}).view;
+    return v ? {view: v} : null;
+  }
+  function openPhrase(items, i) {
+    const f = items[i], where = source(f);
+    if (!where) return;
+    const same = x => x !== f && (f.lib ? x.lib && x.lid === f.lid : !x.lib);
+    open(Object.assign({src: f.src || ''}, where), [f.t].concat(items.filter(same).map(x => x.t)));
+  }
+  function markText(text, hits) {
+    let out = '', pos = 0;
+    hits.slice().sort((a, b) => a[0] - b[0]).forEach(([a, e, k, n]) => {
+      if (a < pos) return;                                  // места наложились — остаётся первое
+      out += esc(text.slice(pos, a)) + `<mark class="hl${k === 0 ? ' hl-main' : ''}" data-h="${n}">${esc(text.slice(a, e))}</mark>`;
+      pos = e;
+    });
+    return out + esc(text.slice(pos));
+  }
+  function html(r) {
+    const by = new Map();
+    r.hits.forEach((x, n) => {
+      const key = x.length > 4 ? `${x[0]}:${x[4]}:${x[5]}` : String(x[0]);
+      if (!by.has(key)) by.set(key, []);
+      by.get(key).push([x[1], x[2], x[3], n]);
+    });
+    const t = (key, text) => by.has(key) ? markText(text, by.get(key)) : esc(text);
+    const out = r.start > 0 ? [`<div class="d-cut">… начало документа не показано (фрагментов: ${r.start}) …</div>`] : [];
+    r.blocks.forEach((b, i) => {
+      const k = String(i);
+      if (b.k === 'h') out.push(`<div class="d-h d-h${Math.min(b.l || 1, 4)}">${t(k, b.t)}</div>`);
+      else if (b.k === 'p') out.push(`<p class="d-p${b.m ? ' d-mark' : ''}">${t(k, b.t)}</p>`);
+      else if (b.k === 'li') out.push(`<div class="d-li"${b.o ? ` data-o="${esc(b.o)}"` : ''} style="margin-left:${Math.min(b.l || 0, 4) * 14}px">${t(k, b.t)}</div>`);
+      else if (b.k === 'img') out.push(`<div class="d-img">🖼 Рисунок${b.t ? ': ' + t(k, b.t) : ''}</div>`);
+      else if (b.k === 'tb') {
+        const c = (ri, j, v) => t(`${i}:${ri}:${j}`, String(v));
+        out.push(`<div class="d-tb"><table>${b.t ? `<caption>${c(-1, -1, b.t)}</caption>` : ''}`
+          + `<thead><tr>${(b.c || []).map((v, j) => `<th>${c(-1, j, v)}</th>`).join('')}</tr></thead>`
+          + `<tbody>${(b.r || []).map((row, ri) => `<tr>${row.map((v, j) => `<td>${c(ri, j, v)}</td>`).join('')}</tr>`).join('')}</tbody></table>`
+          + `${b.more ? `<div class="d-cut">… и ещё строк: ${b.more}</div>` : ''}</div>`);
+      }
+    });
+    if (r.start + r.blocks.length < r.total) out.push('<div class="d-cut">… дальше документ не показан …</div>');
+    return out.join('') || '<p class="d-p">В документе нет текста.</p>';
+  }
+  function go(step) {
+    const m = D.marks;
+    if (!m.length || !D.sh) return;
+    D.cur = (D.cur + step + m.length) % m.length;
+    m.forEach((x, j) => x.classList.toggle('hl-cur', j === D.cur));
+    m[D.cur].scrollIntoView({block: 'center', behavior: step ? 'smooth' : 'auto'});
+    $('.doc-pos', D.sh.body).textContent = `${D.cur + 1} из ${m.length}`;
+  }
+  async function original() {
+    const r = D.res, q = D.req;
+    if (!r || !r.orig) return;
+    const u = new URLSearchParams();
+    if (q.lib) u.set('lib', q.lib); else u.set('view', q.view);
+    u.set('file', r.file);
+    q.phrases.slice(0, 9).forEach(p => u.append('p', p.slice(0, 200)));
+    const pdf = r.ext === '.pdf';
+    Busy.on(pdf ? 'Готовлю PDF с выделением…' : 'Готовлю копию Word с выделением…');
+    try {
+      const res = await Engine.get('/api/docview/original?' + u.toString());
+      if (!res.ok) throw new Error(res.text() || 'Оригинал не открылся');
+      const stem = r.name.replace(/\.[^.]+$/, '').slice(0, 80) || 'документ';
+      const name = filenameFrom(res, `${stem} — найдено${pdf ? '.pdf' : '.docx'}`);
+      Busy.off();
+      const how = await saveFile(res.blob(pdf ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'), name);
+      if (how !== 'aborted') toast(pdf ? `Копия PDF: найденное выделено${r.page ? `, фраза — на странице ${r.page}` : ''}.` : 'Копия Word: эта фраза выделена жёлтым маркером, другие найденные — бирюзовым.', false, 7000);
+    } catch (e) { toast(e.message, true, 8000); } finally { Busy.off(); }
+  }
+  async function open(where, phrases, file) {
+    D.req = Object.assign({}, where, {phrases});
+    D.res = null; D.marks = []; D.cur = 0;
+    if (!D.sh) {
+      const body = h(`<div class="docv"><div class="doc-bar"><select class="hidden" aria-label="Файл материалов"></select>
+        <span class="doc-nav hidden"><button type="button" class="btn ghost doc-btn" data-a="prev" aria-label="Предыдущее место">▲</button><span class="doc-pos"></span><button type="button" class="btn ghost doc-btn" data-a="next" aria-label="Следующее место">▼</button></span></div>
+        <div class="doc-legend"><mark class="hl hl-main">эта фраза</mark><mark class="hl doc-leg-other">другие найденные</mark></div>
+        <p class="hint doc-note"></p><div class="doc-page"></div><p class="hint doc-info"></p></div>`);
+      const orig = h('<button class="btn ghost hidden" type="button" data-a="orig"></button>');
+      const done = h('<button class="btn primary" type="button">Готово</button>');
+      D.sh = openSheet({title: '📄 Документ', full: true, body, foot: [orig, done], onClose: () => { D.sh = null; }});
+      done.addEventListener('click', () => D.sh && D.sh.close());
+      orig.addEventListener('click', original);
+      $('[data-a=prev]', body).addEventListener('click', () => go(-1));
+      $('[data-a=next]', body).addEventListener('click', () => go(1));
+      $('select', body).addEventListener('change', e => open(D.req, D.req.phrases, +e.target.value));
+      D.orig = orig;
+    }
+    const b = D.sh.body, page = $('.doc-page', b);
+    D.sh.setTitle('📄 Документ');
+    $('.doc-note', b).textContent = ''; $('.doc-info', b).textContent = '';
+    D.orig.classList.add('hidden');
+    $('.doc-nav', b).classList.add('hidden');
+    page.innerHTML = '<p class="d-p">Открываю документ…</p>';
+    try {
+      const req = {src: where.src || '', phrases};
+      if (where.lib) req.lib = where.lib; else req.view = where.view;
+      if (file !== undefined) req.file = file;
+      const r = await apiJSON('POST', '/api/docview', req);
+      if (!D.sh) return;
+      D.res = r;
+      D.sh.setTitle('📄 ' + r.name);
+      const sel = $('select', b);
+      sel.innerHTML = r.files.map((n, j) => `<option value="${j}"${j === r.file ? ' selected' : ''}>${esc(n)}</option>`).join('');
+      sel.classList.toggle('hidden', r.files.length < 2);
+      page.innerHTML = html(r);
+      D.marks = $$('mark.hl', page);
+      D.cur = Math.max(0, D.marks.findIndex(m => m.classList.contains('hl-main')));
+      $('.doc-nav', b).classList.toggle('hidden', !D.marks.length);
+      $('.doc-legend', b).classList.toggle('hidden', !D.marks.length);
+      $('.doc-leg-other', b).classList.toggle('hidden', !D.marks.some(m => !m.classList.contains('hl-main')));
+      $('.doc-note', b).textContent = r.note || '';
+      $('.doc-info', b).textContent = (where.lib ? 'Файл «📚 Библиотеки материалов»' : 'Материалы доклада') + (r.total ? ` · фрагментов текста: ${r.total}` : '');
+      if (r.orig) {
+        D.orig.textContent = r.ext === '.pdf' ? '📄 PDF с выделением' : '📄 Word с выделением';
+        D.orig.classList.remove('hidden');
+      }
+      if (D.marks.length) requestAnimationFrame(() => go(0)); else b.scrollTop = 0;
+    } catch (e) { page.innerHTML = `<p class="d-p">${esc(e.message)}</p>`; }
+  }
+  return {source, openPhrase, open};
 })();
 
 /* ---------------------------------------------------------------- свои слайды из PowerPoint */
