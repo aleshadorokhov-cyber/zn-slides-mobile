@@ -105,12 +105,11 @@ function filenameFrom(r, fallback) {
 
 /* ---------------------------------------------------------------- окна-листы */
 const Sheets = [];
-function openSheet({title, sub = '', body, foot, full = false, onClose, back = false}) {
+function openSheet({title, sub = '', body, foot, full = false, onClose}) {   // в каждом окне — крестик справа
   const wrap = h(`<div class="sheet-wrap"><div class="sheet-back"></div><div class="sheet${full ? ' full' : ''}" role="dialog" aria-modal="true">
     <div class="sheet-grip"></div>
-    <div class="sheet-head">${back ? '<button class="icon-btn" data-x="1" aria-label="Назад"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></button>' : ''}
-      <h3><span class="ttl"></span><span class="sub"></span></h3>
-      ${back ? '' : '<button class="icon-btn" data-x="1" aria-label="Закрыть"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>'}</div>
+    <div class="sheet-head"><h3><span class="ttl"></span><span class="sub"></span></h3>
+      <button class="icon-btn sheet-x" type="button" data-x="1" aria-label="Закрыть" title="Закрыть"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
     <div class="sheet-body"></div></div></div>`);
   $('.ttl', wrap).textContent = title || '';
   $('.sub', wrap).textContent = sub;

@@ -569,19 +569,59 @@ const More = (() => {
     });
   }
 
-  /* ---------------------------------------------------------------- тема */
+  /* ---------------------------------------------------------------- вид: тема и размер текста (как «🎨 Вид» в Windows 1.7.1) */
+  // [id, название, [фон, окно, текст]] — образец в окне «Вид»; сами цвета — в app.css (:root[data-theme])
+  const THEMES = [
+    ['', 'Как в телефоне', null],
+    ['light', 'Светлая', ['#F2F5F9', '#FFFFFF', '#00669A']],
+    ['dark', 'Тёмная', ['#07101D', '#0F1B2E', '#6CC4EE']],
+    ['navy', 'Фирменная синяя', ['#04224A', '#093060', '#8AD3FF']],
+    ['graphite', 'Графит', ['#17191C', '#22252A', '#7FC9F2']],
+    ['sand', 'Тёплая светлая', ['#F4EEE2', '#FFFCF5', '#005E94']],
+    ['contrast', 'Контрастная тёмная', ['#000000', '#000000', '#FFFFFF']],
+    ['contrast-light', 'Контрастная светлая', ['#FFFFFF', '#FFFFFF', '#000000']],
+  ];
+  const LIGHT = ['light', 'sand', 'contrast-light'];
+  const SIZES = [['m', 'Обычный'], ['l', 'Крупный'], ['xl', 'Очень крупный']];
+  const curTheme = () => { const v = restore('theme', ''); return THEMES.some(t => t[0] === v) ? v : ''; };
+  const curFz = () => { const v = restore('fz', 'l'); return SIZES.some(z => z[0] === v) ? v : 'l'; };
   function theme() {
-    const cur = restore('theme', '');
-    const next = cur === '' ? 'dark' : (cur === 'dark' ? 'light' : '');
-    setTheme(next);
-    toast(next === 'dark' ? 'Тёмная тема' : (next === 'light' ? 'Светлая тема' : 'Тема как в телефоне'));
+    const body = h(`<div><div class="sec-h">Размер текста</div><div class="vm-row"></div>
+      <div class="vm-sample"><b>Так выглядит текст</b><p>Презентация из документов в корпоративном шаблоне.</p>
+        <p class="hint">Подсказки и подписи — тоже крупно и чётко.</p><p class="lk">Ссылка или кнопка</p></div>
+      <div class="sec-h">Тема</div><div class="vm-themes"></div></div>`);
+    const draw = () => {
+      const th = curTheme(), fz = curFz();
+      $('.vm-themes', body).innerHTML = THEMES.map(([id, name, c]) => `<button type="button" class="vm-theme${id === th ? ' on' : ''}" data-th="${id}" aria-pressed="${id === th}">
+        ${c ? `<span class="vm-sw" style="background:${c[0]}; border: 1px solid ${c[2]}66"><i style="background:${c[1]}; border: 1px solid ${c[2]}88"></i><i style="background:${c[2]}"></i><i style="background: var(--grad-btn)"></i></span>`
+          : '<span class="vm-sw vm-auto"><i style="background: var(--grad-btn)"></i></span>'}${esc(name)}</button>`).join('');
+      $('.vm-row', body).innerHTML = SIZES.map(([id, name]) => `<button type="button" data-fz="${id}" class="${id === fz ? 'on' : ''}" aria-pressed="${id === fz}">${name}</button>`).join('');
+      $$('.vm-theme', body).forEach(b => b.addEventListener('click', () => { setTheme(b.dataset.th); draw(); }));
+      $$('.vm-row button', body).forEach(b => b.addEventListener('click', () => { setFz(b.dataset.fz); draw(); }));
+    };
+    draw();
+    const done = h('<button class="btn primary" type="button">Готово</button>');
+    const sh = openSheet({title: '🎨 Вид', sub: 'Запоминается в этом телефоне', body, foot: done});
+    done.addEventListener('click', () => sh.close());
+  }
+  function viewSub() {
+    const t = THEMES.find(x => x[0] === curTheme()), z = SIZES.find(x => x[0] === curFz());
+    $('#moreThemeSub').textContent = `${t[1]} · ${z[1].toLowerCase()} текст`;
   }
   function setTheme(v) {
-    if (v) { document.documentElement.setAttribute('data-theme', v); store('theme', v); }
-    else { document.documentElement.removeAttribute('data-theme'); try { localStorage.removeItem('znm.theme'); } catch (e) { /* нет */ } }
-    $('#moreThemeSub').textContent = v === 'dark' ? 'Тёмная' : (v === 'light' ? 'Светлая' : 'Как в телефоне');
-    const dark = v === 'dark' || (!v && matchMedia('(prefers-color-scheme: dark)').matches);
-    $('meta[name=theme-color]').setAttribute('content', dark ? '#0B1524' : '#00326E');
+    const d = document.documentElement;
+    if (v) { d.setAttribute('data-theme', v); store('theme', v); }
+    else { d.removeAttribute('data-theme'); try { localStorage.removeItem('znm.theme'); } catch (e) { /* нет */ } }
+    const dark = v ? !LIGHT.includes(v) : matchMedia('(prefers-color-scheme: dark)').matches;
+    d.setAttribute('data-tone', dark ? 'dark' : 'light');
+    const t = THEMES.find(x => x[0] === v);
+    $('meta[name=theme-color]').setAttribute('content', !dark ? '#00326E' : (t && t[2] ? t[2][0] : '#07101D'));
+    viewSub();
+  }
+  function setFz(v) {
+    document.documentElement.setAttribute('data-fz', v);
+    store('fz', v);
+    viewSub();
   }
 
   /* ---------------------------------------------------------------- установка */
@@ -629,7 +669,8 @@ const More = (() => {
       <h4>Что умеет телефон</h4><p>Тот же движок, что и в Windows-версии: анализ документов, планы, макеты, диаграммы, картинки, свои шаблоны, справка Word. Всё считается в самом телефоне — документы никуда не отправляются, если не выбрана облачная модель ИИ.</p>
       <h4>Проверка, словарь, версии</h4><p>«✔ Проверить» на экране «План»: замечания рецензента с исправлением одной кнопкой, сверка чисел с материалами, текст по словарю Компании, проверка готового файла и сравнение с эталонами. «👥 Версии» собирает из плана версии для правления, рабочую и внешнюю. «📎 Свои слайды» вставляет слайды из своего файла PowerPoint как есть.</p>
       <h4>Библиотека материалов</h4><p>«Ещё» → «Библиотека материалов»: прежние доклады и презентации. Из них берутся готовые фразы («🔎 Подходящие фразы» у слайда, режим «+ поиск фраз»), образцы для «Плана по образцу» и эталоны для проверки.</p>
-      <h4>Только в Windows-версии</h4><p>Автопилот (папка «Входящие»), поиск и установка моделей ИИ на компьютере, 3D-модели, проверка готового файла по картинкам слайдов. Подробности — в инструкции к мобильной версии.</p>
+      <h4>Только в Windows-версии</h4><p>Автопилот (папка «Входящие»), поиск и установка моделей ИИ на компьютере, 3D-модели, проверка готового файла по картинкам слайдов, фирменный шрифт интерфейса (на телефоне — системный шрифт, он сделан для экрана). Подробности — в инструкции к мобильной версии.</p>
+      <h4>Вид</h4><p>Кнопка 🎨 вверху или «Ещё» → «Вид»: семь тем (светлая, тёмная, фирменная синяя, графит, тёплая и две контрастные) или «Как в телефоне», и размер текста — обычный, крупный или очень крупный. В каждом окне справа вверху есть крестик ✕, он закрывает окно.</p>
       <h4>Перенос на компьютер</h4><p>«Сохранить план» даёт файл .plan.json — его открывает и Windows-версия, и наоборот.</p>`;
     openSheet({title: 'Как это работает', body});
   }
@@ -672,8 +713,9 @@ const More = (() => {
       if (m === 'help') help();
       if (m === 'storage') storage();
     }));
-    setTheme(restore('theme', ''));
-    matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', () => setTheme(restore('theme', '')));
+    setTheme(curTheme());
+    setFz(curFz());
+    matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', () => setTheme(curTheme()));
   }
   function refresh() { $('#moreAiSub').textContent = aiSub(); }
   return {init, openAi, refresh, projects, theme, help, install, standalone, isIOS};

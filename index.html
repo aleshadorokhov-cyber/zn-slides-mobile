@@ -14,8 +14,10 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
-<script>/* тема до загрузки стилей — без мигания: выбор человека или как в телефоне */
-try { var th = localStorage.getItem('znm.theme'); if (th === 'light' || th === 'dark') document.documentElement.setAttribute('data-theme', th); } catch (e) {}</script>
+<script>/* тема и размер текста до загрузки стилей — без мигания: выбор человека или как в телефоне */
+try { var d = document.documentElement, th = JSON.parse(localStorage.getItem('znm.theme') || '""'), fz = JSON.parse(localStorage.getItem('znm.fz') || '""');
+  if (/^(light|dark|navy|graphite|sand|contrast|contrast-light)$/.test(th)) d.setAttribute('data-theme', th);
+  if (/^(m|l|xl)$/.test(fz)) d.setAttribute('data-fz', fz); } catch (e) {}</script>
 <link rel="stylesheet" href="css/app.css">
 </head>
 <body>
@@ -30,7 +32,7 @@ try { var th = localStorage.getItem('znm.theme'); if (th === 'light' || th === '
       <div class="appbar-sub" id="barSub">Корпоративный шаблон АО «Зарубежнефть»</div>
     </div>
   </div>
-  <button class="appbar-btn" id="barAction" type="button" aria-label="Тема"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.5"/><path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M5.3 18.7l1.6-1.6M17.1 6.9l1.6-1.6"/></svg></button>
+  <button class="appbar-btn" id="barAction" type="button" aria-label="Вид: тема и размер текста" title="Вид"><svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 0 18c1.1 0 1.8-.8 1.8-1.7 0-.5-.2-.9-.5-1.2-.3-.3-.5-.7-.5-1.2 0-.9.8-1.7 1.8-1.7H17a4 4 0 0 0 4-4C21 6.6 17 3 12 3z"/><circle cx="7.5" cy="11" r="1.3"/><circle cx="10.5" cy="7" r="1.3"/><circle cx="15" cy="7.5" r="1.3"/></svg></button>
 </header>
 
 <main id="screens">
@@ -164,7 +166,7 @@ try { var th = localStorage.getItem('znm.theme'); if (th === 'light' || th === '
       <div class="menu-h">Настройки</div>
       <button class="menu-item" type="button" data-m="templates"><i>🎨</i><span><b>Шаблоны оформления</b><small id="moreTplSub">Корпоративный или свой .pptx/.potx</small></span></button>
       <button class="menu-item" type="button" data-m="ai"><i>✨</i><span><b>Модель ИИ</b><small id="moreAiSub">Не подключена — план строится по правилам</small></span></button>
-      <button class="menu-item" type="button" data-m="theme"><i>🌓</i><span><b>Тема</b><small id="moreThemeSub">Как в телефоне</small></span></button>
+      <button class="menu-item" type="button" data-m="theme"><i>🎨</i><span><b>Вид: тема и размер текста</b><small id="moreThemeSub">Как в телефоне · крупный текст</small></span></button>
     </div>
     <div class="menu-group">
       <div class="menu-h">О программе</div>
@@ -172,7 +174,7 @@ try { var th = localStorage.getItem('znm.theme'); if (th === 'light' || th === '
       <button class="menu-item" type="button" data-m="help"><i>❓</i><span><b>Как это работает</b><small>Коротко о шагах и возможностях</small></span></button>
       <button class="menu-item" type="button" data-m="storage"><i>💽</i><span><b>Память телефона</b><small id="moreStorageSub">Сколько места занимает конструктор</small></span></button>
     </div>
-    <p class="about" id="aboutLine">Конструктор презентаций · версия 1.7 для телефона</p>
+    <p class="about" id="aboutLine">Конструктор презентаций · версия 1.7.1 для телефона</p>
     <div class="cta-space"></div>
   </section>
 </main>
