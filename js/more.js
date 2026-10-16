@@ -69,7 +69,8 @@ const More = (() => {
     const L = st.llm, prov = new Map(st.providers.map(p => [p.id, p]));
     const cfg = {provider: L.provider || 'ollama', base_url: L.base_url || '', model: L.model || '', api_key: L.api_key || '',
       temperature: L.temperature ?? '', num_ctx: L.num_ctx ?? '', timeout: L.timeout ?? '', max_chars: L.max_chars ?? '',
-      illustrations: L.illustrations ?? '', cloud_consent: !!L.cloud_consent};
+      illustrations: L.illustrations ?? '', cloud_consent: !!L.cloud_consent,
+      embed_url: L.embed_url || '', embed_model: L.embed_model || '', vision_url: L.vision_url || '', vision_model: L.vision_model || ''};
     const isLocalProv = id => (prov.get(id) || {}).group === 'local';
     const lanHost = () => { try { const u = new URL(cfg.base_url); return LocalAI.isLoop(u.hostname) ? '' : u.hostname; } catch (e) { return ''; } };
     let where = !cfg.model ? 'none' : (cfg.provider === 'browser' ? 'device' : !isLocalProv(cfg.provider) ? 'cloud'
@@ -111,6 +112,7 @@ const More = (() => {
         if (where === v && v !== 'none') { slot = h('<div class="ai-det"></div>'); grp.appendChild(slot); }
       });
       body.appendChild(grp);
+      body.appendChild(auxEl());
       if (where === 'none') return;
       if (where === 'cloud') return drawCloud();
       if (where === 'device') return drawDevice();
@@ -245,6 +247,52 @@ const More = (() => {
       return d;
     }
 
+    /* модели поиска фраз и названий картинок (1.7): только в сети Компании или на этом телефоне */
+    const aux = () => ({embed_url: cfg.embed_url.trim(), embed_model: cfg.embed_model.trim(), vision_url: cfg.vision_url.trim(), vision_model: cfg.vision_model.trim()});
+    function auxEl() {
+      const d = h('<details class="card more aux"><summary>Модели поиска и названий</summary></details>');
+      d.open = !!(cfg.embed_model || cfg.vision_model);
+      d.appendChild(h(`<p class="hint" style="margin-top:0"><b>Модель поиска</b> сравнивает готовые предложения из документов и «📚 Библиотеки материалов» со слайдом и ничего не пишет сама: режим «+ поиск фраз» и «🔎 Подходящие фразы» у слайда. Например, <b>bge-m3</b> в Ollama.
+        <b>Модель для названий</b> смотрит на свои фото, даёт им название по содержанию и предлагает эффекты к фото. Например, <b>qwen2.5vl:7b</b> или <b>gemma3:4b</b>.
+        Обе работают на компьютере в сети Wi-Fi или в сети Компании — материалы наружу не уходят. Без них фразы ищутся по совпадению слов.</p>`));
+      if (cfg.base_url && cfg.provider === 'ollama') {
+        const same = h('<button class="btn ghost small wide" type="button">Тот же адрес, что у основной модели</button>');
+        same.addEventListener('click', () => { cfg.embed_url = cfg.vision_url = cfg.base_url.trim(); draw(); });
+        d.appendChild(same);
+      }
+      d.appendChild(field('Адрес модели поиска', cfg, 'embed_url', {inputmode: 'url', placeholder: 'http://192.168.1.10:11434'}));
+      d.appendChild(field('Модель поиска', cfg, 'embed_model', {placeholder: 'bge-m3'}));
+      d.appendChild(field('Адрес модели для названий', cfg, 'vision_url', {inputmode: 'url', placeholder: 'http://192.168.1.10:11434'}));
+      d.appendChild(field('Модель для названий картинок', cfg, 'vision_model', {placeholder: 'qwen2.5vl:7b'}));
+      const res = h('<p class="hint aux-res"></p>'), pic = h('<img class="aux-pic hidden" alt="Снимок, который назвала модель">');
+      const row = h('<div class="row2" style="margin-top:10px"><button class="btn ghost small" type="button">Проверить поиск</button><button class="btn ghost small" type="button">Проверить названия</button></div>');
+      const [be, bv] = $$('button', row);
+      async function test(kind) {
+        res.className = 'hint aux-res';
+        res.textContent = kind === 'embed' ? 'Проверяю модель поиска…' : 'Модель смотрит на пробный снимок… Первый запрос загружает модель в память — до пары минут.';
+        pic.classList.add('hidden');
+        be.disabled = bv.disabled = true;
+        try {
+          const r = (await Engine.post(kind === 'embed' ? '/api/llm/embed_test' : '/api/llm/vision_test', {llm: Object.assign(fields(), aux())})).json();
+          if (!r.ok) { res.className = 'hint aux-res warn-txt'; res.textContent = '✕ ' + (r.error || 'нет ответа'); return; }
+          if (kind === 'embed') {
+            const good = r.near > r.far;
+            res.textContent = `✓ Модель поиска «${r.model}» отвечает: вектор из ${r.dims} чисел, ${fmtTime(r.seconds)}. Близость похожих фраз ${String(r.near).replace('.', ',')}, далёких — ${String(r.far).replace('.', ',')}`
+              + (good ? ' — различает смысл.' : ' — похоже, это не модель поиска. Нужна, например, bge-m3.');
+            if (!good) res.className = 'hint aux-res warn-txt';
+          } else {
+            res.textContent = `✓ «${r.model}» назвала ${r.url ? 'снимок' : 'рисунок'} за ${fmtTime(r.seconds)}: «${r.name}»${r.tags && r.tags.length ? ' · слова для поиска: ' + r.tags.join(', ') : ''}.`;
+            if (r.url) { engineImage(r.url).then(u => { if (u) { pic.src = u; pic.classList.remove('hidden'); } }); }
+          }
+        } catch (e) { res.className = 'hint aux-res warn-txt'; res.textContent = '✕ ' + e.message; }
+        finally { be.disabled = bv.disabled = false; }
+      }
+      be.addEventListener('click', () => test('embed'));
+      bv.addEventListener('click', () => test('vision'));
+      d.appendChild(row); d.appendChild(res); d.appendChild(pic);
+      return d;
+    }
+
     /* встроенная модель: скачать, выбрать, удалить */
     async function drawDevice() {
       const box = h('<div></div>');
@@ -340,7 +388,7 @@ const More = (() => {
     }
 
     save.addEventListener('click', async () => {
-      const o = where === 'none' ? {model: ''} : fields();
+      const o = Object.assign(where === 'none' ? {model: ''} : fields(), aux());
       if (where !== 'none' && !o.model) { toast('Выберите модель: нажмите «Найти модели» или «Проверить связь».', true, 6000); return; }
       if (where === 'device' && LocalLLM.reason()) { toast('Встроенная модель в этом браузере пока недоступна — см. подсказку выше.', true, 6000); return; }
       if (where === 'device' && !await LocalLLM.inCache(o.model)) { toast('Сначала скачайте выбранную модель.', true, 6000); return; }
@@ -576,9 +624,12 @@ const More = (() => {
     body.innerHTML = `<h4>1. Материалы</h4><p>Добавьте документы: Word, PDF, PowerPoint, Excel, CSV, JSON или текст. Можно сразу несколько. Задайте название, количество слайдов и способ построения: по правилам или с моделью ИИ.</p>
       <h4>2. План</h4><p>Конструктор предлагает план слайдов в корпоративном шаблоне. Нажмите слайд, чтобы изменить текст, макет (их больше 30), таблицу, диаграмму или картинки. Есть «Варианты оформления» и «Замечание к слайду» — например, «сделай короче» или «покажи таблицей».</p>
       <h4>3. Просмотр и готовая презентация</h4><p>Слайды можно пролистать на весь экран. Кнопка «Скачать .pptx» собирает презентацию и предлагает отправить её — в PowerPoint, «Файлы», почту или мессенджер.</p>
-      <h4>Фото библиотеки</h4><p>«Ещё» → «Библиотека картинок» → «📷 Фото» или «Картинки» у слайда: 158 фото нефтегаза, энергетики, стройки и экологии с Викисклада под открытыми лицензиями. Подходящие к слайду отмечены «★». Автор фото сам подписывается в заметках слайда, так требует лицензия. Фото скачивается при первом выборе и потом доступно без интернета.</p>
-      <h4>Свои фото</h4><p>«Ещё» → «Библиотека картинок» или «Картинки» у слайда: «🖼 Свои фото» берёт снимки из галереи, «📷 Снять фото» — с камеры. Фото хранятся в телефоне, находятся поиском и ставятся на слайды так же, как картинки конструктора.</p>
+      <h4>Фото библиотеки</h4><p>«Ещё» → «Библиотека картинок» → «📷 Фото» или «Картинки» у слайда: 158 фото нефтегаза, энергетики, стройки и экологии с Викисклада под открытыми лицензиями. Подходящие к слайду отмечены «★». Автор фото сам подписывается в заметках слайда, так требует лицензия. Фото скачивается при первом выборе и потом доступно без интернета. Эффект к фото — рамка, тень, круг, отражение, чёрно-белое и другие — выбирается в «Картинках» у слайда; без выбора его подбирает сборка.</p>
+      <h4>Свои фото</h4><p>«Ещё» → «Библиотека картинок» или «Картинки» у слайда: «🖼 Свои фото» берёт снимки из галереи, «📷 Снять фото» — с камеры. Фото хранятся в телефоне, находятся поиском и ставятся на слайды так же, как картинки конструктора. Нажмите своё фото, чтобы дать ему название и автора и включить «В библиотеке фото» — тогда оно само подбирается к подходящим слайдам.</p>
       <h4>Что умеет телефон</h4><p>Тот же движок, что и в Windows-версии: анализ документов, планы, макеты, диаграммы, картинки, свои шаблоны, справка Word. Всё считается в самом телефоне — документы никуда не отправляются, если не выбрана облачная модель ИИ.</p>
+      <h4>Проверка, словарь, версии</h4><p>«✔ Проверить» на экране «План»: замечания рецензента с исправлением одной кнопкой, сверка чисел с материалами, текст по словарю Компании, проверка готового файла и сравнение с эталонами. «👥 Версии» собирает из плана версии для правления, рабочую и внешнюю. «📎 Свои слайды» вставляет слайды из своего файла PowerPoint как есть.</p>
+      <h4>Библиотека материалов</h4><p>«Ещё» → «Библиотека материалов»: прежние доклады и презентации. Из них берутся готовые фразы («🔎 Подходящие фразы» у слайда, режим «+ поиск фраз»), образцы для «Плана по образцу» и эталоны для проверки.</p>
+      <h4>Только в Windows-версии</h4><p>Автопилот (папка «Входящие»), поиск и установка моделей ИИ на компьютере, 3D-модели, проверка готового файла по картинкам слайдов. Подробности — в инструкции к мобильной версии.</p>
       <h4>Перенос на компьютер</h4><p>«Сохранить план» даёт файл .plan.json — его открывает и Windows-версия, и наоборот.</p>`;
     openSheet({title: 'Как это работает', body});
   }
@@ -614,6 +665,8 @@ const More = (() => {
       if (m === 'openPlan') Plan.openPlanFile();
       if (m === 'report') Materials.report();
       if (m === 'photos') Pictures.openLibrary();
+      if (m === 'library') Library.open();
+      if (m === 'dict') Dict.open();
       if (m === 'theme') theme();
       if (m === 'install') install();
       if (m === 'help') help();

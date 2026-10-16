@@ -16,6 +16,8 @@ const Materials = (() => {
       renderStepper();
     }));
     seg('#modeSeg', v => { state.mode = v; updateAi(); });
+    $('#optExample').addEventListener('change', e => store('example', e.target.value));
+    $('#iconShapeBox').replaceWith(Object.assign(Icons.shapesEl(), {id: 'iconShapeBox'}));
     seg('#aiLevelSeg', v => { state.aiLevel = v; });
     $('#optTpl').addEventListener('change', e => { store('tpl', e.target.value); syncTemplate(); });
     // запомненные параметры
@@ -24,7 +26,7 @@ const Materials = (() => {
     if (o.marks) $('#optMarks').value = o.marks;
     if (o.pictures === false) $('#optPics').checked = false;
     state.slides = o.slides || 0;
-    state.mode = o.mode === 'ai' ? 'ai' : 'rules';
+    state.mode = ['ai', 'search'].includes(o.mode) ? o.mode : 'rules';
     state.aiLevel = o.ai_level === 'full' ? 'full' : 'fast';
     setSeg('#modeSeg', state.mode); setSeg('#aiLevelSeg', state.aiLevel);
     renderStepper();
@@ -40,6 +42,10 @@ const Materials = (() => {
     const l = state.status && state.status.llm;
     const ready = l && l.model;
     $('#aiBox').classList.toggle('hidden', state.mode !== 'ai');
+    const sInfo = $('#searchInfo');
+    sInfo.classList.toggle('hidden', state.mode !== 'search');
+    sInfo.textContent = 'Модель поиска только подбирает готовые предложения из материалов и «📚 Библиотеки материалов» — сама ничего не пишет.'
+      + (l && l.embed_model ? ` Модель поиска: ${l.embed_model}.` : ' Модель поиска не задана — фразы подбираются по совпадению слов. Задать её: «Ещё» → «Модель ИИ».');
     $('#aiInfo').innerHTML = !ready ? 'Модель ИИ не настроена. <a href="#" id="aiSetup">Настроить</a> — или постройте план без ИИ.'
       : `${l.cloud ? '☁ Облачная' : 'Локальная'} модель: <b>${esc(l.provider_name || l.provider)}</b> · ${esc(l.model)}${l.cloud ? '<br><small>Текст документов отправляется во внешний сервис.</small>' : ''} · <a href="#" id="aiSetup">изменить</a>`;
     const a = $('#aiSetup');
@@ -90,12 +96,14 @@ const Materials = (() => {
       focus: $('#optFocus').value.trim(), agenda: $('#optAgenda').value, sections: $('#optSections').value,
       conclusions: $('#optConcl').checked, data_tables: $('#optDataTables').checked, animations: $('#optAnim').checked,
       marks: $('#optMarks').value, remarks: $('#optRemarks').value.trim(), pictures: $('#optPics').checked,
+      example: $('#optExample').value || 'auto',
     };
     store('opts', {event: o.event, slides: o.target_slides, mode: o.mode, ai_level: o.ai_level, marks: o.marks, pictures: o.pictures});
     return o;
   }
   function aiLabel(o) {
     const l = state.status && state.status.llm;
+    if (o.mode === 'search') return 'Анализирую документы и подбираю готовые фразы…';
     if (o.mode !== 'ai') return 'Анализирую документы…';
     return l && l.cloud ? `Отправляю документы облачной модели ${l.provider_name}…` : 'Отправляю документы модели ИИ…';
   }
@@ -172,5 +180,18 @@ const Materials = (() => {
   }
   function template() { return $('#optTpl').value; }
 
-  return {init, analyze, report, updateAi, renderTemplates, template, addFiles, renderFiles, options};
+  /* «План по образцу»: образцы — презентации PowerPoint из библиотеки материалов */
+  function examples(items) {
+    const sel = $('#optExample');
+    const decks = (items || []).filter(e => (e.deck || 0) >= 2);
+    const cur = sel.value && sel.value !== 'auto' ? sel.value : restore('example', 'auto');
+    sel.innerHTML = '<option value="auto">похожая презентация из библиотеки</option><option value="off">не использовать</option>'
+      + decks.map(e => `<option value="${esc(e.id)}">образец: ${esc(e.name)}</option>`).join('');
+    sel.value = [...sel.options].some(x => x.value === cur) ? cur : 'auto';
+    $('#exampleHint').innerHTML = decks.length
+      ? `Вид и порядок слайдов — как у похожих слайдов ваших прежних презентаций. Образцов в библиотеке: <b>${decks.length}</b>.`
+      : 'Вид и порядок слайдов — как у похожих слайдов ваших прежних презентаций. Добавьте их в «📚 Библиотеку материалов» (PowerPoint, .pptx).';
+  }
+
+  return {init, analyze, report, updateAi, renderTemplates, template, addFiles, renderFiles, options, examples};
 })();

@@ -1,7 +1,7 @@
 /* plan.js — экран «План» (список слайдов), экран «Просмотр», полноэкранный просмотр, сборка .pptx. */
 'use strict';
 function kindOf(l) { return (state.layouts[l] || {}).kind; }
-function layoutName(l) { return (state.layouts[l] || {}).name || l; }
+function layoutName(l) { return l === 'own' ? 'Свой слайд из PowerPoint' : ((state.layouts[l] || {}).name || l); }
 function thumbSvg(layout, s) {
   return `<svg class="thumb" viewBox="0 0 72 40" xmlns="http://www.w3.org/2000/svg"><rect width="72" height="40" fill="#fff"/>${TH[layout] || TH.cards}</svg>`;
 }
@@ -17,6 +17,8 @@ const Plan = (() => {
     state.spec = spec;
     state.info = data ? data.info : null;
     state.warnings = data ? (data.warnings || []) : [];
+    Icons.sync(spec.meta);
+    Check.reset();
     if (spec.meta.template === undefined) spec.meta.template = Materials.template();
     else if (spec.meta.template !== Materials.template() && state.templates.some(t => t.id === spec.meta.template)) {
       $('#optTpl').value = spec.meta.template; store('tpl', spec.meta.template);
@@ -24,6 +26,7 @@ const Plan = (() => {
     Thumbs.reset();
     render();
     saveProject();
+    Check.soon();
     if (msg) { toast(msg); App.go('plan'); }
   }
 
@@ -40,6 +43,7 @@ const Plan = (() => {
     const info = state.info || {};
     const parts = [`${sp.slides.length} ${plural(sp.slides.length, 'слайд', 'слайда', 'слайдов')}`];
     if (info.mode_used === 'ai') parts.push(info.llm_cloud ? `☁ ${info.llm_provider_name || 'облачная модель'}` : 'модель ИИ');
+    else if (info.mode_used === 'search') parts.push('по правилам + поиск фраз');
     else if (info.mode_used) parts.push('по правилам');
     if (info.seconds) parts.push(`${String(info.seconds).replace('.', ',')} с`);
     $('#planMeta').textContent = parts.join(' · ');
@@ -60,13 +64,34 @@ const Plan = (() => {
       <div class="info"><div class="t"></div><div class="lay"><span class="tag"></span></div></div>
       <span class="go"><svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg></span></li>`);
     $('.t', li).textContent = slideTitle(s);
-    $('.tag', li).textContent = layoutName(s.layout);
+    $('.tag', li).textContent = s.layout === 'own' ? `📎 Свой слайд · ${(s.own || {}).n || ''}` : layoutName(s.layout);
     if ((s.alts || []).length > 1) $('.lay', li).appendChild(h(`<span class="tag alt">вариантов: ${s.alts.length}</span>`));
     if ((s.remarks || []).length) $('.lay', li).appendChild(h(`<span class="tag">💬 ${s.remarks.length}</span>`));
+    if (s.found_n) $('.lay', li).appendChild(h(`<span class="tag">🔎 +${s.found_n}</span>`));
+    if (s.example) $('.lay', li).appendChild(h(`<span class="tag">📐 по образцу</span>`));
+    badgeEls(s, i).forEach(b => $('.lay', li).appendChild(b));
     const pic = $('.pic', li);
     Thumbs.attach(pic, s);
     li.addEventListener('click', () => Editor.open(s));
     return li;
+  }
+
+  // значки проверки у слайда: ⚠ N — важные замечания рецензента, 🔢 N — числа, которых нет в материалах
+  function badgeEls(s, i) {
+    return Check.badges(s).map(([tab, text, title]) => {
+      const b = h(`<button type="button" class="tag chk-tag" aria-label="${esc(title)}"></button>`);
+      b.textContent = text;
+      b.addEventListener('click', e => { e.stopPropagation(); Check.open(tab, state.spec.slides.indexOf(s)); });
+      return b;
+    });
+  }
+  function badges() {
+    if (!state.spec) return;
+    $$('#slideList > li').forEach((li, i) => {
+      const s = state.spec.slides[i];
+      $$('.chk-tag', li).forEach(x => x.remove());
+      if (s) badgeEls(s, i).forEach(b => $('.lay', li).appendChild(b));
+    });
   }
 
   function addSlide() {
@@ -122,7 +147,6 @@ const Plan = (() => {
     if (!state.spec) return;
     Busy.on('Собираю презентацию…', {detail: 'Корпоративный шаблон, слайды, диаграммы и картинки'});
     try {
-      await Pictures.syncAllCredits();
       const r = await Engine.post('/api/build', {spec: state.spec});
       if (!r.ok) throw new Error(r.json().error || 'Не удалось собрать презентацию');
       let w = [];
@@ -140,9 +164,12 @@ const Plan = (() => {
     $('#btnSavePlan').addEventListener('click', savePlan);
     $('#btnPlanRemarks').addEventListener('click', planRemarks);
     $('#btnBulkPics').addEventListener('click', () => Pictures.openBulk());
+    $('#btnCheck').addEventListener('click', () => Check.open());
+    $('#btnVersions').addEventListener('click', () => Versions.open());
+    $('#btnOwn').addEventListener('click', () => Own.open());
     $('#planInput').addEventListener('change', onPlanFile);
   }
-  return {init, open, render, build, savePlan, openPlanFile, addSlide};
+  return {init, open, render, build, savePlan, openPlanFile, addSlide, badges};
 })();
 
 /* ---------------------------------------------------------------- картинки слайдов (миниатюры) */
@@ -151,8 +178,8 @@ const Thumbs = (() => {
   const waiting = new Map();        // ключ → [элементы .pic]
   let timer = null, running = false;
   const key = s => JSON.stringify([stripAlts(s), state.spec && state.spec.meta.title, state.spec && state.spec.meta.template,
-    state.spec && state.spec.slides.indexOf(s)]);
-  function stripAlts(s) { const c = Object.assign({}, s); delete c.alts; delete c.remarks; delete c.alt_index; return c; }
+    state.spec && state.spec.meta.icon_shape, state.spec && state.spec.meta.icon_3d, state.spec && state.spec.slides.indexOf(s)]);
+  function stripAlts(s) { const c = Object.assign({}, s); ['alts', 'remarks', 'alt_index', 'found', 'found_n', 'example'].forEach(k => delete c[k]); return c; }
   function reset() { cache.clear(); waiting.clear(); }
   const put = (el, v) => SlidesView.put(el, v);
   /* не больше 80 слайдов и 8 подготовленных презентаций в памяти телефона: старые забываются

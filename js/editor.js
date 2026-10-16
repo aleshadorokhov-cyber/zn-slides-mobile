@@ -66,9 +66,9 @@ function convert(s, to) {
 const Editor = (() => {
   let cur = null;                 // {s, sh, prevTimer}
 
-  function open(s) {
+  function open(s, after) {
     const body = h('<div class="ed"></div>');
-    const sh = openSheet({title: '', full: true, back: true, body, onClose: () => { cur = null; planChanged(); }});
+    const sh = openSheet({title: '', full: true, back: true, body, onClose: () => { cur = null; planChanged(); if (after) after(); }});
     cur = {s, sh};
     draw();
   }
@@ -93,9 +93,9 @@ const Editor = (() => {
     cur.pv = pv;
     showPreview();
     // инструменты
-    const meta = META.includes(s.layout);
+    const meta = META.includes(s.layout) || s.layout === 'own';
     const tools = h(`<div class="ed-tools">
-      <button class="ed-tool" data-t="lay"><i>▦</i>Макет</button>
+      <button class="ed-tool" data-t="lay" ${s.layout === 'own' ? 'disabled style="opacity:.4"' : ''}><i>▦</i>Макет</button>
       <button class="ed-tool" data-t="pic" ${meta ? 'disabled style="opacity:.4"' : ''}><i>🖼</i>Картинки</button>
       <button class="ed-tool" data-t="chart" ${meta ? 'disabled style="opacity:.4"' : ''}><i>📊</i>Диаграмма</button>
       <button class="ed-tool" data-t="more"><i>⋯</i>Ещё</button></div>`);
@@ -114,8 +114,10 @@ const Editor = (() => {
     const d = (state.layouts[s.layout] || {}).desc;
     if (d) b.appendChild(h(`<p class="hint" style="margin:-4px 2px 10px">${esc(d)}</p>`));
     fields(s, b);
+    // готовые фразы из материалов и библиотеки (1.7)
+    if (!META.includes(s.layout) && s.layout !== 'own') b.appendChild(Phrases.el(s, () => { draw(); changed(); }));
     // замечание
-    if (!['title', 'end', 'section'].includes(s.layout)) b.appendChild(remarkEl(s));
+    if (!['title', 'end', 'section', 'own'].includes(s.layout)) b.appendChild(remarkEl(s));
     b.appendChild(h('<div style="height:24px"></div>'));
   }
 
@@ -132,6 +134,14 @@ const Editor = (() => {
     if (s.layout === 'end') {
       b.appendChild(field('Текст', s, 'title', {placeholder: 'Спасибо за внимание!', ...on}));
       b.appendChild(field('Подпись', s, 'subtitle', {placeholder: 'пусто — название презентации', ...on}));
+      return;
+    }
+    if (s.layout === 'own') {
+      const o = s.own || {};
+      b.appendChild(h(`<p class="hint" style="margin:0 2px 12px">Слайд ${o.n || '?'} из файла «${esc(o.name || '')}» переносится как есть: текст, картинки, диаграммы, таблицы. Поправить содержимое можно в PowerPoint и вставить слайд заново («📎 Свои слайды» на экране «План»).</p>`));
+      b.appendChild(field('Заголовок', s, 'title', {area: true, rows: 2, hint: 'При фирменном фоне — в заголовке шаблона, иначе — вместо заголовка слайда.', ...on}));
+      b.appendChild(field('Фон', s, 'bg', {select: Own.BG, get: () => s.bg || 'corporate', ...on}));
+      b.appendChild(field('Заметки докладчика', s, 'notes', {area: true, rows: 3}));
       return;
     }
     b.appendChild(field('Заголовок', s, 'title', {area: true, rows: 2, ...on}));
@@ -202,7 +212,7 @@ const Editor = (() => {
       s.items = s.items || [];
       s.items.forEach((it, i) => {
         if (typeof it !== 'object' || !it) s.items[i] = it = {title: '', text: String(it || '')};
-        const card = h(`<div class="item"><div class="item-head"><span class="n">${i + 1}</span><span class="sp"></span>
+        const card = h(`<div class="item"><div class="item-head"><span class="n">${i + 1}</span><span class="ic-slot"></span><span class="sp"></span>
           <button class="icon-btn" data-a="up" aria-label="Выше">↑</button><button class="icon-btn" data-a="down" aria-label="Ниже">↓</button>
           <button class="icon-btn" data-a="del" aria-label="Удалить">✕</button></div></div>`);
         const numeric = flds.filter(f => f[2] === 'numeric' || f[0] === 'unit');
@@ -212,6 +222,7 @@ const Editor = (() => {
           card.appendChild(r);
         }
         flds.filter(f => !(numeric.length >= 2 && numeric.includes(f))).forEach(f => card.appendChild(itemInput(it, f)));
+        if (lay !== 'agenda') $('.ic-slot', card).replaceWith(Icons.button(it, i, () => { draw(); changed(); }));
         $$('[data-a]', card).forEach(x => x.addEventListener('click', () => {
           const a = x.dataset.a;
           if (a === 'del') s.items.splice(i, 1);

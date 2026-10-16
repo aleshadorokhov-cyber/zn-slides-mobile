@@ -22,11 +22,22 @@ const Pictures = (() => {
   function swapSlide(s, a) { const arr = state.spec.slides, k = arr.indexOf(s); if (k >= 0) arr[k] = a; }
   function pick(s, i) { const a = chooseAlt(s, i); swapSlide(s, a); return a; }
 
+  // фото библиотеки лежат на сайте и скачиваются в телефон, когда их выбирают; без сети нового не взять
+  async function photosLocal(s, images) {
+    const had = new Set(curPics(s).map(im => im.picture));
+    for (const im of images) {
+      if (!im.picture || !isPhotoId(im.picture) || had.has(im.picture)) continue;
+      let ok = false;
+      try { ok = (await Engine.get('/api/photo/' + encodeURIComponent(im.picture))).ok; } catch (e) { ok = false; }
+      if (!ok) throw new Error('Это фото ещё не скачано в телефон, а сети сейчас нет. Подключитесь к интернету и поставьте его снова — дальше оно будет работать и без сети.');
+    }
+  }
   async function setSlidePictures(s, images, full) {
-    if (!images.length) return syncCredits(dropPictures(s));
+    if (!images.length) return dropPictures(s);
+    await photosLocal(s, images);
     const base = clone(picBase(s)); delete base.alts;
     const r = await apiJSON('POST', '/api/picture', {slide: base, images: images.slice(0, PIC_MAX), full: !!full});
-    return syncCredits(addPictureAlt(s, r.alt));
+    return addPictureAlt(s, r.alt);
   }
   function addPictureAlt(s, alt) {
     let alts = (s.alts && s.alts.length) ? s.alts.slice() : [];
@@ -69,123 +80,32 @@ const Pictures = (() => {
     return a;
   }
 
-  /* ---------------------------------------------------------------- фото библиотеки (открытые лицензии)
-     Лежат на сайте рядом с конструктором: миниатюры сохраняются в телефоне сразу, само фото — при первом выборе.
-     Выбранное фото загружается в движок как своя картинка с именем <id>.jpg — дальше с ним работает тот же движок. */
-  const PH = {list: null, byId: new Map(), up: new Map(), upOf: new Map()};
-  async function ensurePhotos() {
-    if (PH.list) return PH.list;
-    try {
-      const r = await fetch('photos/catalog.json');
-      PH.list = r.ok ? ((await r.json()).items || []) : [];
-    } catch (e) { PH.list = []; }
-    PH.byId = new Map(PH.list.map(p => [p.id, p]));
-    linkPhotos();
-    return PH.list;
-  }
-  function linkPhotos() {
-    PH.up.clear(); PH.upOf.clear();
-    (LIB.mine || []).forEach(u => {
-      const id = (u.name || '').replace(/\.[^.]+$/, '');
-      if (PH.byId.has(id)) { PH.up.set(u.upload, id); PH.upOf.set(id, u.upload); }
-    });
-  }
-  const photoOf = im => (im && im.upload && PH.up.has(im.upload)) ? PH.byId.get(PH.up.get(im.upload)) : null;
-  const thumbUrl = id => `photos/thumbs/${encodeURIComponent(id)}.jpg`;
-  async function refreshMine() {
-    LIB.mine = (await apiJSON('GET', '/api/uploads')).items || [];
-    linkPhotos();
-  }
-  /* фото библиотеки → своя картинка движка (один раз), ключ 'u:…' */
-  async function photoKey(id) {
-    if (PH.upOf.has(id)) return 'u:' + PH.upOf.get(id);
-    Busy.on('Загружаю фото…');
-    let blob = null;
-    try {
-      const r = await fetch(`photos/${encodeURIComponent(id)}.jpg`);
-      if (r.ok) blob = await r.blob();
-    } catch (e) { /* нет сети */ }
-    if (!blob) {
-      Busy.off();
-      toast(navigator.onLine === false ? 'Нет интернета, а это фото ещё не сохранено в телефоне. Без сети ставятся фото, которые уже выбирались раньше.'
-        : 'Фото не скачалось. Проверьте интернет и попробуйте ещё раз.', true, 9000);
-      return '';
-    }
-    try {
-      const fd = new FormData(); fd.append('file', new File([blob], id + '.jpg', {type: 'image/jpeg'}), id + '.jpg');
-      const u = await apiJSON('POST', '/api/upload_image', fd);
-      await refreshMine();
-      const up = u.image && u.image.upload;
-      if (!up) throw new Error('Фото не загрузилось');
-      PH.up.set(up, id); PH.upOf.set(id, up);
-      return 'u:' + up;
-    } catch (e) { toast(e.message, true, 8000); return ''; } finally { Busy.off(); }
-  }
-  /* автор фото — в заметки слайда (для CC BY и CC BY-SA это обязательно), лишние подписи убираются */
-  function syncCredits(s) {
-    if (!s || !PH.byId.size) return s;
-    const want = [];
-    curPics(s).forEach(im => { const p = photoOf(im); if (p && p.credit && !want.includes(p.credit)) want.push(p.credit); });
-    const known = new Set(PH.list.map(p => p.credit).filter(Boolean));
-    const lines = String(s.notes || '').split('\n').filter(l => !known.has(l.trim()));
-    while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
-    const next = lines.concat(want.length && lines.length ? [''] : [], want).join('\n');
-    if (next !== (s.notes || '')) s.notes = next;
-    return s;
-  }
-  // перед сборкой: подписи по тем картинкам, что стоят на слайдах сейчас (вариант слайда мог смениться)
-  async function syncAllCredits() {
-    if (!state.spec) return;
-    const slides = state.spec.slides;
-    if (!slides.some(s => (s.images || []).some(im => im.upload) || /Фото: /.test(s.notes || ''))) return;
-    try {
-      await ensurePhotos();
-      if (!LIB.mine) await refreshMine();
-      slides.forEach(syncCredits);
-    } catch (e) { /* подписи останутся как были */ }
-  }
-  /* ★ подходящие фото: слова слайда против тегов и названия фото (по первым пяти буквам, как в подборе картинок) */
-  const stems = t => (String(t || '').toLowerCase().replace(/ё/g, 'е').match(/[a-zа-я0-9]{4,}/g) || []).map(w => w.slice(0, 5));
-  function slideText(o) {
-    if (o === null || o === undefined) return '';
-    if (typeof o === 'string') return o;
-    if (Array.isArray(o)) return o.map(slideText).join(' ');
-    if (typeof o === 'object') return Object.keys(o).filter(k => k !== 'layout').map(k => slideText(o[k])).join(' ');
-    return '';
-  }
-  function photoSuggest(slides, perSlide, max) {
-    if (!PH.list || !PH.list.length) return [];
-    const out = [], seen = new Set();
-    slides.forEach(sl => {
-      const bag = new Set(stems(slideText(leanSlide(sl))));
-      if (!bag.size) return;
-      PH.list.map((p, i) => {
-        let sc = 0;
-        new Set((p.tags || []).flatMap(stems)).forEach(w => { if (bag.has(w)) sc += 2; });
-        new Set(stems(p.name)).forEach(w => { if (bag.has(w)) sc += 1; });
-        return {p, sc, i};
-      }).filter(x => x.sc >= 2).sort((a, b) => b.sc - a.sc || a.i - b.i).slice(0, perSlide)
-        .forEach(x => { if (!seen.has(x.p.id)) { seen.add(x.p.id); out.push(x); } });
-    });
-    return out.sort((a, b) => b.sc - a.sc || a.i - b.i).slice(0, max)
-      .map(x => ({photo: x.p.id, name: x.p.name, cat: x.p.cat}));
-  }
-
-  /* ---------------------------------------------------------------- библиотека и свои картинки */
+  /* ---------------------------------------------------------------- библиотека, фото и свои картинки
+     Фото (1.7) — в каталоге движка: {id: 'ph_…', photo: true, credit}; на слайде — {picture: 'ph_…'}, автор фото
+     попадает в заметки слайда при сборке (движок). Миниатюры /api/photo/<id>?w=360 отдаёт сам сайт (worker.js),
+     снимок скачивается при первом использовании и дальше хранится в телефоне. Свои фото, добавленные в библиотеку, —
+     тоже фото каталога (mine: true, upload). */
   async function ensureData() {
     if (!LIB.data) {
       LIB.data = await apiJSON('GET', '/api/pictures');
       LIB.byId = new Map(LIB.data.items.map(e => [e.id, e]));
     }
     if (!LIB.mine) LIB.mine = (await apiJSON('GET', '/api/uploads')).items || [];
-    await ensurePhotos();
-    linkPhotos();
     return LIB.data;
   }
+  async function refreshData() {           // после загрузки, правки или удаления своих картинок
+    const [d, m] = await Promise.all([apiJSON('GET', '/api/pictures'), apiJSON('GET', '/api/uploads')]);
+    LIB.data = d; LIB.byId = new Map(d.items.map(e => [e.id, e])); LIB.mine = m.items || [];
+  }
+  const isPhotoId = id => /^ph_/.test(id || '');
+  const photoUrl = (id, w) => `/api/photo/${encodeURIComponent(id)}${w ? '?w=' + w : ''}`;
+  // свои фото с именем встроенного (так телефон 1.6.2 ставил фото библиотеки) — под названием фото
+  const legacyPhoto = u => { const id = u && u.name ? u.name.replace(/\.[^.]+$/, '') : ''; return isPhotoId(id) ? LIB.byId.get(id) : null; };
   const myTitle = u => {
-    const p = u && PH.up.has(u.upload) ? PH.byId.get(PH.up.get(u.upload)) : null;
-    return p ? p.name : ((u && u.name ? u.name.replace(/\.[^.]+$/, '') : '') || 'Своя картинка');
+    const p = legacyPhoto(u);
+    return p ? p.name : ((u && (u.title || (u.name ? u.name.replace(/\.[^.]+$/, '') : ''))) || 'Своя картинка');
   };
+  const libPhotoOf = name => LIB.data && LIB.data.items.find(e => e.mine && e.upload === name);
   function picName(im) {
     if (!im) return '';
     if (im.picture) {
@@ -202,35 +122,140 @@ const Pictures = (() => {
   }
   function imgEl(im) {
     const img = h('<img alt="" loading="lazy">');
-    const ph = im.photo || (photoOf(im) || {}).id;
-    if (ph) { img.src = thumbUrl(ph); img.className = 'ph'; }
+    if (im.picture && isPhotoId(im.picture)) { lazyImg(img, photoUrl(im.picture, 360)); img.className = 'ph'; }
     else if (im.svg) { try { img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(im.svg))); } catch (e) { /* пусто */ } }
     else if (im.picture) lazyImg(img, `/api/pictures/${encodeURIComponent(im.picture)}.svg`);
-    else if (im.upload) lazyImg(img, `/api/upload/${encodeURIComponent(im.upload)}`);
+    else if (im.path) { lazyImg(img, docImageUrl(im.path, 360)); img.className = 'ph'; }
+    else if (im.upload) {
+      const u = (LIB.mine || []).find(x => x.upload === im.upload), lp = legacyPhoto(u);
+      if (lp) lazyImg(img, photoUrl(lp.id, 360));
+      else lazyImg(img, `/api/upload/${encodeURIComponent(im.upload)}${/\.svg$/i.test(im.upload) ? '' : '?w=360'}`);
+      if (lp || !/\.svg$/i.test(im.upload)) img.className = 'ph';
+    }
     return img;
   }
-  // список для вкладки: ★ подходящие, фото, свои, раздел библиотеки; при поиске — фото, вся библиотека, карты и свои
+  // список для вкладки: ★ подходящие, фото, свои, раздел библиотеки; при поиске — свои, фото, рисунки, карты
   function list(cat, q, suggest) {
-    const mine = (LIB.mine || []).filter(u => !PH.up.has(u.upload)).map(u => ({upload: u.upload, name: myTitle(u), cat: 'своя'}));
-    const photos = (PH.list || []).map(p => ({photo: p.id, name: p.name, cat: p.cat, tags: p.tags || []}));
+    const mine = (LIB.mine || []).map(u => ({upload: u.upload, name: myTitle(u), cat: 'своя'}));
+    const items = LIB.data.items.filter(e => !e.mine);             // свои фото из библиотеки — во «Мои»
     if (q) {
-      const words = q.replace(/ё/g, 'е').split(/\s+/).filter(Boolean);
+      const words = q.toLowerCase().replace(/ё/g, 'е').split(/\s+/).filter(Boolean);
       const hit = t => { t = t.toLowerCase().replace(/ё/g, 'е'); return words.every(w => t.includes(w)); };
-      return mine.filter(e => hit(e.name)).concat(photos.filter(e => hit([e.name, e.cat].concat(e.tags).join(' '))))
-        .concat(LIB.data.items.filter(e => hit(e.name + ' ' + e.cat)))
+      const found = items.filter(e => hit(e.name + ' ' + e.cat));
+      if (cat === 'photos') found.sort((a, b) => !!b.photo - !!a.photo);   // на вкладке «Фото» — сначала фото
+      return mine.filter(e => hit(e.name)).concat(found)
         .concat(LIB.data.countries.filter(c => hit(c.name)).map(c => ({id: c.id, name: 'Карта: ' + c.name, cat: 'Карты стран'})));
     }
-    if (cat === 'photos') return photos;
+    if (cat === 'photos') return items.filter(e => e.photo);
     if (cat === 'mine') return mine;
     if (cat === 'maps') return LIB.data.countries.map(c => ({id: c.id, name: c.name, cat: 'Карты стран'}));
     if (cat === '★') return suggest;
-    return LIB.data.items.filter(e => !cat || e.cat === cat);
+    if (!cat) return items.filter(e => !e.photo);
+    return items.filter(e => e.cat === cat);
   }
-  const tileKey = e => e.photo ? (PH.upOf.has(e.photo) ? 'u:' + PH.upOf.get(e.photo) : 'f:' + e.photo) : (e.upload ? 'u:' + e.upload : 'p:' + e.id);
+  const tileKey = e => e.upload ? 'u:' + e.upload : 'p:' + e.id;
+  const docImageUrl = (path, w) => `/api/docimage/${encodeURIComponent(String(path).split(/[\\/]/).pop())}${w ? '?w=' + w : ''}`;
+  // адрес миниатюры растровой картинки слайда (для эффектов)
+  function rasterUrl(im) {
+    if (im.picture && isPhotoId(im.picture)) return photoUrl(im.picture, 360);
+    if (im.path) return docImageUrl(im.path, 360);
+    if (im.upload) {
+      const lp = legacyPhoto((LIB.mine || []).find(x => x.upload === im.upload));
+      return lp ? photoUrl(lp.id, 360) : `/api/upload/${encodeURIComponent(im.upload)}?w=360`;
+    }
+    return '';
+  }
+
+  /* ---------------------------------------------------------------- эффекты фото (1.7), как в Windows-версии
+     Эффект и цвет хранятся в самой картинке слайда (images[i].effect, tone). Не выбран — движок подберёт
+     его по снимку при сборке. «✨ Предложить» — модель, которая видит изображения, или правила по снимку. */
+  const FX = {effects: null, tones: null};
+  async function loadFx() {
+    if (FX.effects) return;
+    const r = await apiJSON('GET', '/api/photofx');
+    FX.effects = r.effects || []; FX.tones = r.tones || [];
+  }
+  const isRaster = im => !!im && !im.svg && (im.upload ? !/\.svg$/i.test(im.upload) : (im.picture ? isPhotoId(im.picture) : !!im.path));
+  function fxDir(s, i) {                  // куда «светлеет» снимок — как ставит макет: к тезисам или книзу
+    const n = (s.images || []).length, items = (s.items || []).some(it => it && (it.text || it.title));
+    if (s.illustration && items && i === 0) return 'left';
+    if (items) return n === 1 ? 'right' : 'bottom';
+    return 'bottom';
+  }
+  const fxName = id => ((FX.effects || []).find(e => e.id === id) || {}).name || '';
+  const toneName = id => ((FX.tones || []).find(t => t.id === (id || '')) || {}).name || '';
+  function fxWho(im) {
+    if (!im.effect) return '';
+    if (im.effect_by === 'model') return '✨ предложила модель' + (im.effect_why ? ': ' + im.effect_why : '');
+    if (im.effect_by === 'rules') return 'подобрано по снимку' + (im.effect_why ? ': ' + im.effect_why : '');
+    return 'выбрано вами';
+  }
+  async function fxSuggest(s, i) {
+    const im = (s.images || [])[i];
+    if (!im) return null;
+    const slide = {title: s.title || '', items: s.items || [], illustration: !!s.illustration,
+      images: (s.images || []).map(x => { const c = Object.assign({}, x); delete c.svg; return c; })};
+    const r = await apiJSON('POST', '/api/photofx/suggest', {slide, index: i});
+    if (!r.effect) return null;
+    im.effect = r.effect;
+    if (r.tone) im.tone = r.tone; else delete im.tone;
+    im.effect_by = r.by === 'model' ? 'model' : 'rules';
+    im.effect_why = r.why || '';
+    // несколько снимков на слайде — одной серией: тот же эффект соседям (кроме выбранных вами)
+    (s.images || []).forEach(o => {
+      if (o === im || !isRaster(o) || (o.effect && o.effect_by === 'user')) return;
+      o.effect = im.effect;
+      if (im.tone) o.tone = im.tone; else delete o.tone;
+      o.effect_by = im.effect_by;
+      o.effect_why = 'как у соседнего снимка — серия выглядит одинаково';
+    });
+    if (r.note) toast(r.note, true, 8000);
+    return r;
+  }
+  /* блок «Эффект» одной картинки слайда; getSlide — текущий слайд (после замены картинок он другой) */
+  function fxEl(getSlide, i, onChange) {
+    const box = h('<div class="fx-box"></div>');
+    const draw = async () => {
+      const s = getSlide(), im = (s.images || [])[i];
+      if (!im || !isRaster(im)) { box.remove(); return; }
+      if (!FX.effects) {
+        box.innerHTML = '<span class="hint">Загружаю эффекты…</span>';
+        try { await loadFx(); } catch (e) { box.innerHTML = ''; return; }
+      }
+      const many = (s.images || []).filter(isRaster).length > 1, dir = fxDir(s, i), tone = im.tone || '';
+      const cur = im.effect ? fxName(im.effect) + (tone ? ' · ' + toneName(tone).toLowerCase() : '') : 'подберётся при сборке';
+      box.innerHTML = `<div class="fx-head"><b>Эффект${many ? ' фото ' + (i + 1) : ''}:</b> <span class="fx-cur"></span></div>
+        <p class="hint fx-why"></p>
+        <div class="fx-gal">${FX.effects.map(e => `<button type="button" class="fx-opt${e.id === im.effect ? ' on' : ''}" data-e="${esc(e.id)}" aria-pressed="${e.id === im.effect}">
+          <span class="fxv fx-${esc(e.id)} tone-${esc(tone || 'none')}" data-dir="${dir}"><img alt=""></span><small>${esc(e.name)}</small></button>`).join('')}</div>
+        <div class="fx-tones"><span class="hint">Цвет:</span>${FX.tones.map(t => `<button type="button" class="chip${t.id === tone ? ' on' : ''}" data-t="${esc(t.id)}">${esc(t.name)}</button>`).join('')}</div>
+        <button type="button" class="btn ghost small wide fx-ask">✨ Предложить эффект</button>`;
+      $('.fx-cur', box).textContent = cur;
+      $('.fx-why', box).textContent = fxWho(im);
+      const url = rasterUrl(im);
+      if (url) engineImage(url).then(u => { if (u) $$('.fxv img', box).forEach(x => { x.src = u; }); });
+      $$('.fx-opt', box).forEach(b => b.addEventListener('click', () => {
+        im.effect = b.dataset.e; im.effect_by = 'user'; delete im.effect_why; onChange(); draw();
+      }));
+      $$('.fx-tones .chip', box).forEach(b => b.addEventListener('click', () => {
+        if (b.dataset.t) im.tone = b.dataset.t; else delete im.tone;
+        if (!im.effect) im.effect = 'frame';
+        im.effect_by = 'user'; delete im.effect_why; onChange(); draw();
+      }));
+      $('.fx-ask', box).addEventListener('click', async ev => {
+        ev.currentTarget.disabled = true;
+        $('.fx-why', box).textContent = 'Смотрю на снимок…';
+        try { if (await fxSuggest(getSlide(), i)) onChange(); } catch (e) { toast(e.message, true, 8000); }
+        draw();
+      });
+    };
+    draw();
+    return box;
+  }
+  const nPhotos = () => LIB.data.items.filter(e => e.photo && !e.mine).length;
 
   /* общий выбор картинок: поиск, вкладки, сетка плиток, загрузка своих */
-  /* plain — для «Библиотеки»: фото не загружается в движок при нажатии, его ключ 'f:…' уходит в onToggle как есть */
-  function chooser({starLabel, suggest, isOn, onToggle, onUploaded, start, plain}) {
+  function chooser({starLabel, suggest, isOn, onToggle, onUploaded, start}) {
     const box = h(`<div>
       <div class="search"><input type="search" placeholder="Найти: нефть, скважина, команда, Вьетнам…"></div>
       <div class="tabs-row"></div>
@@ -241,9 +266,10 @@ const Pictures = (() => {
     const q = $('input[type=search]', box), tabs = $('.tabs-row', box), grid = $('.pic-grid', box);
     let cat = start !== undefined ? start : (suggest.length ? '★' : '');
     function drawTabs() {
-      const nMine = (LIB.mine || []).filter(u => !PH.up.has(u.upload)).length;
-      const cats = (suggest.length ? ['★'] : []).concat(PH.list.length ? ['photos'] : []).concat(['mine', '', 'maps']).concat(LIB.data.categories.filter(c => c !== 'Карты стран'));
-      const label = c => c === '★' ? starLabel : (c === 'photos' ? `📷 Фото · ${PH.list.length}` : (c === 'mine' ? `Мои${nMine ? ' · ' + nMine : ''}` : (c === 'maps' ? '🗺 Карты стран' : (c || 'Рисунки'))));
+      const nMine = (LIB.mine || []).length, nPh = nPhotos();
+      const cats = (suggest.length ? ['★'] : []).concat(nPh ? ['photos'] : []).concat(['mine', '', 'maps'])
+        .concat(LIB.data.categories.filter(c => c !== 'Карты стран' && c !== LIB.data.my_cat));
+      const label = c => c === '★' ? starLabel : (c === 'photos' ? `📷 Фото · ${nPh}` : (c === 'mine' ? `Мои${nMine ? ' · ' + nMine : ''}` : (c === 'maps' ? '🗺 Карты стран' : (c || 'Рисунки'))));
       const query = q.value.trim();
       tabs.innerHTML = cats.map(c => `<button type="button" data-c="${esc(c)}" class="${c === cat && !query ? 'on' : ''}">${esc(label(c))}</button>`).join('');
       $$('button', tabs).forEach(b => b.addEventListener('click', () => { cat = b.dataset.c; q.value = ''; draw(); }));
@@ -260,18 +286,14 @@ const Pictures = (() => {
       arr.forEach(e => {
         const k = tileKey(e), on = isOn(k);
         const t = h(`<div class="pic-tile${on ? ' on' : ''}" role="button" tabindex="0" aria-pressed="${on}"><span class="ok">✓</span><div class="im"></div><span></span></div>`);
-        $('.im', t).appendChild(imgEl(e.photo ? {photo: e.photo} : (e.upload ? {upload: e.upload} : {picture: e.id})));
+        $('.im', t).appendChild(imgEl(e.upload ? {upload: e.upload} : {picture: e.id}));
         $('span:last-child', t).textContent = e.name;
         if (e.upload) {
           const del = h('<button class="del" type="button" aria-label="Удалить картинку">🗑</button>');
           del.addEventListener('click', async ev => { ev.stopPropagation(); if (await deleteUpload(e.upload)) draw(); });
           t.appendChild(del);
         }
-        t.addEventListener('click', async () => {
-          let key = tileKey(e);
-          if (key.startsWith('f:') && !plain) { key = await photoKey(e.photo); if (!key) return; }
-          await onToggle(key); draw();
-        });
+        t.addEventListener('click', async () => { await onToggle(k); draw(); });
         grid.appendChild(t);
       });
     }
@@ -320,7 +342,7 @@ const Pictures = (() => {
       } catch (e) { errs.push(`${arr[i].name}: ${e.message.replace(/^Картинка не загружена: /, '')}`); }
     }
     Busy.off();
-    try { await refreshMine(); } catch (e) { /* обновится позже */ }
+    try { await refreshData(); } catch (e) { /* обновится позже */ }
     if (errs.length) toast('Не загружено — ' + errs.slice(0, 3).join('; ') + (errs.length > 3 ? ` и ещё ${errs.length - 3}` : ''), true, 9000);
     else if (done.length > 1) toast(`Загружено картинок: ${done.length}`);
     return done;
@@ -332,7 +354,7 @@ const Pictures = (() => {
     if (!await confirmSheet(`Удалить картинку «${myTitle(e)}» из телефона?` + (used ? ` Она стоит на слайдах (${used}) — с них тоже уберётся.` : ''), 'Удалить', true)) return false;
     try { await apiJSON('DELETE', '/api/upload/' + encodeURIComponent(name)); } catch (err) { toast(err.message, true); return false; }
     LIB.mine = (LIB.mine || []).filter(x => x.upload !== name);
-    linkPhotos();
+    try { await refreshData(); } catch (err) { /* обновится позже */ }
     IMG.delete('/api/upload/' + encodeURIComponent(name));
     if (state.spec) {
       for (const s of state.spec.slides.slice()) {
@@ -352,7 +374,7 @@ const Pictures = (() => {
     let s = s0, busy = false;
     const ai = !!(state.status && state.status.llm && state.status.llm.model);
     const body = h(`<div>
-      <div class="sec-h" style="margin-top:0">На слайде сейчас</div><div class="now-row"></div>
+      <div class="sec-h" style="margin-top:0">На слайде сейчас</div><div class="now-row"></div><div class="fx-list"></div>
       <div class="seg small" role="radiogroup" style="margin-top:10px"><button type="button" data-v="side">Рядом с тезисами</button><button type="button" data-v="full">На весь слайд</button></div>
       ${ai ? '<button class="btn ghost small wide" type="button" data-a="ai" style="margin-top:10px">✨ Нарисовать моделью ИИ</button>' : ''}
       <div class="sec-h">Выбрать картинку · до ${PIC_MAX}</div><div class="chooser"><p class="hint">Загружаю библиотеку…</p></div></div>`);
@@ -368,8 +390,11 @@ const Pictures = (() => {
     }));
     drawSeg();
     function drawNow() {
-      const row = $('.now-row', body), cur = curPics(s);
-      row.innerHTML = '';
+      const row = $('.now-row', body), cur = curPics(s), fl = $('.fx-list', body);
+      row.innerHTML = ''; fl.innerHTML = '';
+      if (s.layout === 'image') (s.images || []).forEach((im, i) => {
+        if (isRaster(im)) fl.appendChild(fxEl(() => s, i, () => planChanged({quiet: true})));
+      });
       if (!cur.length) { row.appendChild(h('<p class="hint" style="margin:0">Картинок нет — нажмите картинку ниже, и она встанет на слайд.</p>')); return; }
       cur.forEach((im, i) => {
         const c = h('<div class="now-chip"><span></span><button class="icon-btn" type="button" aria-label="Убрать со слайда">✕</button></div>');
@@ -404,7 +429,7 @@ const Pictures = (() => {
       await ensureData();
       const sg = await apiJSON('POST', '/api/pictures/suggest', {slide: leanSlide(s)}).catch(() => ({items: []}));
       if (sh.closed) return;
-      ch = chooser({starLabel: '★ Подходят', suggest: photoSuggest([s], 6, 6).concat(sg.items || []),
+      ch = chooser({starLabel: '★ Подходят', suggest: sg.items || [],
         isOn: k => curPics(s).some(im => picKey(im) === k),
         onToggle: async k => {
           const cur = curPics(s), at = cur.findIndex(im => picKey(im) === k);
@@ -547,7 +572,7 @@ const Pictures = (() => {
       await ensureData();
       const sg = await apiJSON('POST', '/api/pictures/suggest', {slides: state.spec.slides.map(leanSlide)}).catch(() => ({items: []}));
       if (sh.closed) return;
-      ch = chooser({starLabel: '★ К презентации', suggest: photoSuggest(state.spec.slides, 2, 12).concat(sg.items || []),
+      ch = chooser({starLabel: '★ К презентации', suggest: sg.items || [],
         isOn: k => rows.some(r => r.key === k),
         onToggle: k => {
           const i = rows.findIndex(r => r.key === k);
@@ -572,29 +597,76 @@ const Pictures = (() => {
     try {
       await ensureData();
       if (sh.closed) return;
-      const ch = chooser({starLabel: '', suggest: [], start: PH.list.length ? 'photos' : 'mine', isOn: () => false, plain: true,
+      const ch = chooser({starLabel: '', suggest: [], start: nPhotos() ? 'photos' : 'mine', isOn: () => false,
         onToggle: k => openPicture(k, () => ch.redraw()), onUploaded: async () => {}});
       $('.chooser', body).replaceWith(ch);
     } catch (e) { $('.chooser', body).innerHTML = `<p class="warn-txt">${esc(e.message)}</p>`; }
   }
-  /* одна картинка: крупно, автор фото, на какой слайд поставить; свою — удалить */
+  /* одна картинка: крупно, автор фото, на какой слайд поставить; своё фото — название, библиотека, удалить */
   function openPicture(k, onChange) {
-    const photo = k.startsWith('f:') ? PH.byId.get(k.slice(2)) : photoOf(keyToImage(k));
-    const mine = k.startsWith('u:') && !photo;
+    const im = keyToImage(k), mine = !!im.upload;
+    const u = mine ? (LIB.mine || []).find(x => x.upload === im.upload) : null;
+    const photo = !mine && isPhotoId(im.picture) ? LIB.byId.get(im.picture) : (mine ? legacyPhoto(u) : null);
     const body = h('<div><div class="pic-big"></div><p class="pic-big-name"></p></div>');
+    const big = h('<img alt="">');
+    $('.pic-big', body).appendChild(big);
     if (photo) {
-      const img = h('<img alt="">');
-      img.src = thumbUrl(photo.id);
-      const full = new Image();                        // крупное фото — когда скачается; без сети остаётся миниатюра
-      full.onload = () => { img.src = full.src; };
-      full.src = `photos/${encodeURIComponent(photo.id)}.jpg`;
-      $('.pic-big', body).appendChild(img);
-      const cr = h('<p class="pic-credit"><span></span> <a target="_blank" rel="noopener">источник</a><br>Подпись автора сама добавится в заметки слайда.</p>');
-      $('span', cr).textContent = photo.credit || '';
-      if (photo.url) $('a', cr).href = photo.url; else $('a', cr).remove();
+      engineImage(photoUrl(photo.id, 360)).then(x => { if (x && !big.src) big.src = x; });
+      engineImage(photoUrl(photo.id)).then(x => { if (x) big.src = x; });       // крупное — когда скачается
+    } else if (mine && !/\.svg$/i.test(im.upload)) engineImage(`/api/upload/${encodeURIComponent(im.upload)}?w=800`).then(x => { if (x) big.src = x; });
+    else $('.pic-big', body).replaceChildren(imgEl(im));
+    $('.pic-big-name', body).textContent = photo ? photo.name : picName(im);
+    if (photo && photo.credit) {
+      const cr = h('<p class="pic-credit"><span></span><br>Подпись автора сама добавится в заметки слайда.</p>');
+      $('span', cr).textContent = photo.credit;
       body.appendChild(cr);
-    } else $('.pic-big', body).appendChild(imgEl(keyToImage(k)));
-    $('.pic-big-name', body).textContent = photo ? photo.name : picName(keyToImage(k));
+    }
+    // своё фото в библиотеке (1.7): название, раздел и автор — как «✎» в Windows-версии
+    let saveLib = null, gone = false;
+    if (mine && u && !legacyPhoto(u) && !/\.svg$/i.test(im.upload)) {
+      const cats = [LIB.data.my_cat || 'Мои фото'].concat((LIB.data.photo_cats || []).filter(c => c !== LIB.data.my_cat));
+      const f = h(`<div class="lib-box">
+        <label class="fld"><span>Название — что на снимке</span><input type="text" maxlength="90" placeholder="Например: Буровая на Харьяге"></label>
+        <label class="sw"><input type="checkbox"><span>В библиотеке фото: подбирается к слайдам по названию</span></label>
+        <div class="lib-more">
+          <label class="fld"><span>Раздел</span><select>${cats.map(c => `<option>${esc(c)}</option>`).join('')}</select></label>
+          <label class="fld"><span>Автор снимка (попадёт в заметки слайда)</span><input type="text" maxlength="120" placeholder="Например: И. Петров"></label>
+        </div></div>`);
+      const [title, author] = $$('input[type=text]', f), lib = $('input[type=checkbox]', f), cat = $('select', f), more = $('.lib-more', f);
+      title.value = u.title || myTitle(u);
+      lib.checked = !!u.lib;
+      cat.value = cats.includes(u.cat) ? u.cat : cats[0];
+      author.value = u.author || '';
+      const drawMore = () => more.classList.toggle('hidden', !lib.checked);
+      lib.addEventListener('change', drawMore); drawMore();
+      title.addEventListener('input', () => { $('.pic-big-name', body).textContent = title.value.trim() || myTitle(u); });
+      // название по содержанию снимка — модель для названий картинок («Модель ИИ» → «Модели поиска и названий»)
+      if (state.status && state.status.llm && state.status.llm.vision_model) {
+        const nm = h('<button class="btn ghost small wide" type="button">🏷 Назвать по содержанию</button>');
+        nm.addEventListener('click', async () => {
+          Busy.on('Модель смотрит на снимок…', {detail: 'Первый запрос загружает модель в память — до пары минут.', cancel: cancelEngine});
+          try {
+            const r = await apiJSON('POST', '/api/upload/' + encodeURIComponent(im.upload) + '/autoname', {});
+            title.value = r.title || title.value;
+            title.dispatchEvent(new Event('input'));
+            toast(`Название: «${r.title}»${(r.tags || []).length ? ' · слова для поиска: ' + r.tags.slice(0, 6).join(', ') : ''}`, false, 6000);
+          } catch (e) { toast(e.message, true, 8000); } finally { Busy.off(); }
+        });
+        title.closest('.fld').after(nm);
+      }
+      body.appendChild(f);
+      saveLib = async () => {
+        const want = {title: title.value.trim(), lib: lib.checked, cat: cat.value, author: author.value.trim()};
+        if (want.title === (u.title || myTitle(u)) && want.lib === !!u.lib && (!want.lib || (want.cat === u.cat && want.author === (u.author || '')))) return true;
+        try {
+          await apiJSON('PATCH', '/api/upload/' + encodeURIComponent(im.upload), want.lib ? want : {title: want.title, lib: false});
+          Object.assign(u, want);
+          await refreshData();
+          toast(want.lib ? 'Фото в библиотеке: оно подбирается к слайдам' : 'Сохранено');
+          return true;
+        } catch (e) { toast(e.message, true, 8000); return false; }
+      };
+    }
     const slides = state.spec ? state.spec.slides.map((s, j) => ({s, j})).filter(({s}) => !NO_PIC.includes(picBase(s).layout)) : [];
     const foot = [];
     let sel = null, put = null, sh = null;
@@ -610,14 +682,12 @@ const Pictures = (() => {
       sel.addEventListener('change', () => { put.disabled = sel.value === ''; });
       put.addEventListener('click', async () => {
         const j = +sel.value, s = state.spec.slides[j], cur = curPics(s);
-        let key = k;
-        if (key.startsWith('f:') && PH.upOf.has(photo.id)) key = 'u:' + PH.upOf.get(photo.id);
-        if (cur.some(c => picKey(c) === key)) { toast(`Эта картинка уже стоит на слайде ${j + 1}.`); return; }
+        if (cur.some(c => picKey(c) === k)) { toast(`Эта картинка уже стоит на слайде ${j + 1}.`); return; }
         if (cur.length >= PIC_MAX) { toast(`На слайде ${j + 1} уже ${PIC_MAX} картинки — выберите другой слайд или уберите одну в редакторе слайда.`, true, 7000); return; }
-        if (key.startsWith('f:')) { key = await photoKey(photo.id); if (!key) return; }
+        if (saveLib && !await saveLib()) return;
         Busy.on('Ставлю картинку на слайд…');
         try {
-          await setSlidePictures(s, cur.concat([keyToImage(key)]), isPicAlt(s) && isFullPic(s));
+          await setSlidePictures(s, cur.concat([im]), isPicAlt(s) && isFullPic(s));
           planChanged();
           sh.close();
           onChange();
@@ -627,12 +697,18 @@ const Pictures = (() => {
     } else body.appendChild(h('<p class="hint">Чтобы поставить картинку на слайд, сначала постройте или откройте план.</p>'));
     if (mine) {
       const del = h('<button class="btn danger" type="button">Удалить</button>');
-      del.addEventListener('click', async () => { if (await deleteUpload(keyToImage(k).upload)) { sh.close(); onChange(); } });
+      del.addEventListener('click', async () => { if (await deleteUpload(im.upload)) { gone = true; sh.close(); onChange(); } });
       foot.push(del);
     }
+    if (saveLib && !put) {
+      const sv = h('<button class="btn primary" type="button">Сохранить</button>');
+      sv.addEventListener('click', async () => { if (await saveLib()) { sh.close(); onChange(); } });
+      foot.push(sv);
+    }
     if (put) foot.push(put);
-    sh = openSheet({title: photo ? 'Фото' : (mine ? 'Своё фото' : 'Картинка'), back: true, body, foot: foot.length ? foot : undefined});
+    sh = openSheet({title: photo ? 'Фото' : (mine ? 'Своё фото' : 'Картинка'), back: true, body, foot: foot.length ? foot : undefined,
+      onClose: () => { if (saveLib && put && !gone) saveLib().then(onChange); }});
   }
 
-  return {openSlide, openBulk, openLibrary, syncAllCredits, isPicAlt, curPics};
+  return {openSlide, openBulk, openLibrary, isPicAlt, curPics};
 })();

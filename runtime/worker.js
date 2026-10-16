@@ -12,6 +12,7 @@
  */
 'use strict';
 const BASE = self.location.href.replace(/[^/]*$/, '');      // …/runtime/
+const SITE = new URL('../', BASE).href;                     // корень сайта
 const PY = BASE + 'pyodide/';
 let py = null, M = null, queue = Promise.resolve(), dirty = false, syncing = null;
 
@@ -52,16 +53,18 @@ async function start() {
   boot('Загрузка Python', 2);
   importScripts(PY + 'pyodide.js');
   const files = await (await fetch(BASE + 'files.json')).json();
-  const sitePromise = fetchBytes(BASE + files.site, 'Библиотеки', 30, 55);
-  const appPromise = fetchBytes(BASE + files.app, 'Шаблон и картинки', 55, 85);
+  const sitePromise = fetchBytes(BASE + files.site, 'Библиотеки', 30, 50);
+  const appPromise = fetchBytes(BASE + files.app, 'Шаблон и картинки', 50, 75);
+  const iconsPromise = files.icons ? fetchBytes(BASE + files.icons, 'Значки', 75, 85) : null;
   py = await loadPyodide({indexURL: PY, stdout: s => console.log(s), stderr: s => console.warn(s)});
   boot('Загрузка Python', 25);
-  await py.loadPackage(['ssl', 'lzma', 'hashlib'], {messageCallback: () => {}});
+  await py.loadPackage(['ssl', 'lzma', 'hashlib', 'sqlite3'], {messageCallback: () => {}});
   const site = await sitePromise;
   py.unpackArchive(site, 'zip', {extractDir: '/lib/python3.11/site-packages'});
   const app = await appPromise;
   py.FS.mkdirTree('/app');
   py.unpackArchive(app, 'zip', {extractDir: '/app'});
+  if (iconsPromise) py.unpackArchive(await iconsPromise, 'zip', {extractDir: '/app'});
   boot('Хранилище', 88);
   py.FS.mkdirTree('/app/output');
   try {
@@ -72,6 +75,7 @@ async function start() {
   py.runPython("import sys, os; sys.path.insert(0, '/app'); os.chdir('/app')");
   M = py.pyimport('zn_mobile');
   M.set_notify(s => self.postMessage(Object.assign({type: 'job'}, JSON.parse(s))));
+  if (M.set_site) M.set_site(SITE);
   const version = py.runPython('import app; app.VERSION');
   boot('Готово', 100);
   self.postMessage({type: 'ready', version, seconds: Math.round((performance.now() - t0) / 100) / 10});
@@ -106,6 +110,44 @@ function pdfReady(msg) {
   return self.znPdf.load(BASE + '../vendor/').catch(e => console.warn('pdfium', e));
 }
 
+/* встроенные фотографии (1.7): снимки лежат на сайте, в движке — пустые заглушки (zn_mobile.py).
+   Перед запросом скачиваем снимки, упомянутые в нём (ph_… в адресе или в JSON). */
+const PHOTO_DIR = '/app/assets/photos/photos/';
+const PH_RX = /\bph_(?!my_)[a-z0-9_]{1,60}/g;
+function photoIds(msg) {
+  let text = msg.path || '';
+  const ct = Object.entries(msg.headers || {}).find(([k]) => k.toLowerCase() === 'content-type');
+  if (msg.body && ct && /json/.test(ct[1])) text += new TextDecoder().decode(msg.body);
+  return [...new Set(text.match(PH_RX) || [])];
+}
+function emptyPhoto(id) {
+  try { return py.FS.stat(PHOTO_DIR + id + '.jpg').size === 0; } catch (e) { return false; }
+}
+async function photosReady(msg) {
+  if (!py) return;
+  const ids = photoIds(msg).filter(emptyPhoto);
+  await Promise.all(ids.map(async id => {
+    try {
+      const r = await fetch(SITE + 'photos/' + id + '.jpg');
+      if (!r.ok) return;
+      const b = new Uint8Array(await r.arrayBuffer());
+      if (b.length && emptyPhoto(id)) py.FS.writeFile(PHOTO_DIR + id + '.jpg', b);
+    } catch (e) { /* нет сети: движок попробует сам и, если не выйдет, обойдётся без снимка */ }
+  }));
+}
+/* миниатюры встроенных фото — прямо с сайта (готовые 400 точек), без движка и без очереди */
+async function photoFile(msg) {
+  const m = msg.method === 'GET' && /^\/api\/photo\/(ph_(?!my_)[a-z0-9_]{1,60})(?:\?(.*))?$/.exec(msg.path || '');
+  if (!m) return false;
+  const w = +(new URLSearchParams(m[2] || '').get('w') || 0);
+  let r = null;
+  try { r = await fetch(SITE + 'photos/' + (w && w <= 400 ? 'thumbs/' : '') + m[1] + '.jpg'); } catch (e) { r = null; }
+  if (!r || !r.ok) return false;
+  const buf = await r.arrayBuffer();
+  self.postMessage({type: 'res', id: msg.id, status: 200, headers: {'Content-Type': 'image/jpeg'}, body: buf}, [buf]);
+  return true;
+}
+
 function handle(msg) {
   const {id, method, path, headers, body} = msg;
   let res;
@@ -137,6 +179,10 @@ self.onmessage = ev => {
   const msg = ev.data;
   if (msg && msg.type === 'sab') { SAB = msg; return; }
   if (msg && msg.type === 'req') {
-    queue = queue.then(() => ready).then(() => pdfReady(msg)).then(() => handle(msg)).catch(e => console.warn(e));
+    photoFile(msg).then(done => {
+      if (done) return;
+      queue = queue.then(() => ready).then(() => Promise.all([pdfReady(msg), photosReady(msg)]))
+        .then(() => handle(msg)).catch(e => console.warn(e));
+    });
   }
 };

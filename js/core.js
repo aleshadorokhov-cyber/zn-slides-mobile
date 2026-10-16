@@ -73,7 +73,8 @@ function cancelEngine() { LocalLLM.stop(); Engine.cancelJob(); }
 const IMG = new Map();
 function engineImage(path) {
   if (IMG.has(path)) return IMG.get(path);
-  const p = Engine.get(path).then(r => r.ok ? URL.createObjectURL(r.blob()) : '');
+  const p = Engine.get(path).then(r => r.ok ? URL.createObjectURL(r.blob()) : '').catch(() => '');
+  p.then(u => { if (!u) IMG.delete(path); });        // не вышло (например, без сети) — в следующий раз попробуем снова
   IMG.set(path, p);
   return p;
 }
@@ -218,6 +219,7 @@ function planChanged(opts = {}) {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(saveProject, 800);
   if (!opts.quiet) { Plan.render(); }
+  Check.soon();                       // рецензент и сверка чисел: значки ⚠ и 🔢 у слайдов
 }
 async function saveProject() {
   if (!state.spec) return;

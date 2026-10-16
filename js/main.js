@@ -80,6 +80,7 @@ const App = (() => {
       state.templateRoles = tp.roles || {};
       Materials.renderTemplates();
       Materials.updateAi();
+      Library.load().catch(() => {});              // образцы для «Плана по образцу»
       store('booted', true);
       await restoreLast();
       $('#splash').classList.add('gone');

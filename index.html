@@ -49,6 +49,10 @@ try { var th = localStorage.getItem('znm.theme'); if (th === 'light' || th === '
     </label>
     <ul class="files" id="fileList"></ul>
     <button class="link-btn" id="btnSample" type="button">Нет файлов под рукой? Попробовать на примере</button>
+    <div class="chips-row mat-links">
+      <button type="button" class="chip-btn" data-m="library">📚 Библиотека материалов</button>
+      <button type="button" class="chip-btn" data-m="dict">📖 Словарь Компании</button>
+    </div>
 
     <div class="card">
       <h2 class="card-h">Титульный слайд</h2>
@@ -71,9 +75,11 @@ try { var th = localStorage.getItem('znm.theme'); if (th === 'light' || th === '
       <label class="fld"><span>Шаблон оформления</span><select id="optTpl"></select></label>
       <div class="fld"><span>Как построить план</span>
         <div class="seg" id="modeSeg" role="radiogroup">
-          <button type="button" data-v="rules" class="on" role="radio">Без ИИ, по правилам</button>
+          <button type="button" data-v="rules" class="on" role="radio">По правилам</button>
+          <button type="button" data-v="search" role="radio">+ поиск фраз</button>
           <button type="button" data-v="ai" role="radio">С моделью ИИ</button>
         </div>
+        <p class="hint hidden" id="searchInfo"></p>
       </div>
       <div class="ai-box hidden" id="aiBox">
         <div class="ai-info" id="aiInfo"></div>
@@ -91,6 +97,9 @@ try { var th = localStorage.getItem('znm.theme'); if (th === 'light' || th === '
       <label class="fld"><span>Разделители разделов</span><select id="optSections"><option value="auto">Авто</option><option value="yes">Да</option><option value="no">Нет</option></select></label>
       <label class="fld"><span>Выделенные в документе фрагменты</span><select id="optMarks">
         <option value="priority">Важнее остального</option><option value="only">Только они</option><option value="ignore">Не учитывать</option></select></label>
+      <label class="fld"><span>План по образцу</span><select id="optExample"><option value="auto">похожая презентация из библиотеки</option><option value="off">не использовать</option></select>
+        <span class="hint" id="exampleHint">Вид и порядок слайдов — как у похожих слайдов ваших прежних презентаций PowerPoint из «📚 Библиотеки материалов».</span></label>
+      <div id="iconShapeBox"></div>
       <label class="sw"><input type="checkbox" id="optConcl" checked><span>Итоговый слайд «Ключевые тезисы»</span></label>
       <label class="sw"><input type="checkbox" id="optPics" checked><span>Картинки из библиотеки к подходящим слайдам</span></label>
       <label class="sw"><input type="checkbox" id="optDataTables"><span>Таблицы с данными к диаграммам</span></label>
@@ -116,9 +125,12 @@ try { var th = localStorage.getItem('znm.theme'); if (th === 'light' || th === '
       </div>
       <div class="notes hidden" id="planNotes"></div>
       <div class="chips-row">
+        <button type="button" class="chip-btn" id="btnCheck">✔ Проверить</button>
         <button type="button" class="chip-btn" id="btnAddSlide">＋ Слайд</button>
         <button type="button" class="chip-btn" id="btnBulkPics">🖼 Картинки</button>
         <button type="button" class="chip-btn" id="btnPlanRemarks">💬 Замечания</button>
+        <button type="button" class="chip-btn" id="btnVersions">👥 Версии</button>
+        <button type="button" class="chip-btn" id="btnOwn">📎 Свои слайды</button>
         <button type="button" class="chip-btn" id="btnSavePlan">💾 Сохранить план</button>
       </div>
       <ol class="slides" id="slideList"></ol>
@@ -144,6 +156,8 @@ try { var th = localStorage.getItem('znm.theme'); if (th === 'light' || th === '
       <button class="menu-item" type="button" data-m="projects"><i>🗂</i><span><b>Мои презентации</b><small>Планы, сохранённые на этом телефоне</small></span></button>
       <button class="menu-item" type="button" data-m="openPlan"><i>📂</i><span><b>Открыть план</b><small>Файл .plan.json — из Windows-версии или с телефона</small></span></button>
       <button class="menu-item" type="button" data-m="report"><i>📝</i><span><b>Справка Word</b><small>Краткое содержание материалов в .docx</small></span></button>
+      <button class="menu-item" type="button" data-m="library"><i>📚</i><span><b>Библиотека материалов</b><small>Прежние доклады и презентации: готовые фразы, образцы и эталоны</small></span></button>
+      <button class="menu-item" type="button" data-m="dict"><i>📖</i><span><b>Словарь Компании</b><small>Как правильно пишутся общества, месторождения, должности</small></span></button>
       <button class="menu-item" type="button" data-m="photos"><i>📷</i><span><b>Библиотека картинок</b><small>Фото, рисунки и свои снимки из галереи или с камеры</small></span></button>
     </div>
     <div class="menu-group">
@@ -158,7 +172,7 @@ try { var th = localStorage.getItem('znm.theme'); if (th === 'light' || th === '
       <button class="menu-item" type="button" data-m="help"><i>❓</i><span><b>Как это работает</b><small>Коротко о шагах и возможностях</small></span></button>
       <button class="menu-item" type="button" data-m="storage"><i>💽</i><span><b>Память телефона</b><small id="moreStorageSub">Сколько места занимает конструктор</small></span></button>
     </div>
-    <p class="about" id="aboutLine">Конструктор презентаций · версия 1.6.2 для телефона</p>
+    <p class="about" id="aboutLine">Конструктор презентаций · версия 1.7 для телефона</p>
     <div class="cta-space"></div>
   </section>
 </main>
@@ -214,6 +228,8 @@ try { var th = localStorage.getItem('znm.theme'); if (th === 'light' || th === '
 <script src="js/editor.js"></script>
 <script src="js/chart.js"></script>
 <script src="js/pictures.js"></script>
+<script src="js/check.js"></script>
+<script src="js/extras.js"></script>
 <script src="js/more.js"></script>
 <script src="js/main.js"></script>
 </body>

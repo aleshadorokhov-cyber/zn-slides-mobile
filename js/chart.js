@@ -113,7 +113,7 @@ const Chart = (() => {
     }
     if (!g.names.length) { g.names = ['Ряд 1']; g.vals = g.cats.map(() => ['']); }
     if (!g.cats.length) { g.cats = ['', '', '']; g.vals = g.cats.map(() => g.names.map(() => '')); }
-    return {grid: g, type: CHART_KINDS.some(k => k[0] === type) ? type : 'column', unit, unit2, ins: ins.join('\n')};
+    return {grid: g, type: chartKnown(type) ? type : 'column', unit, unit2, ins: ins.join('\n')};
   }
 
   function toChart(quiet) {
@@ -131,6 +131,17 @@ const Chart = (() => {
   const insLines = () => st.ins.split('\n').map(x => x.trim()).filter(Boolean).slice(0, 4);
   function note() {
     const t = st.type, {chart} = toChart(true), n = chart.series.length, nc = chart.categories.length;
+    const info = chartInfo(t);
+    if (info && !info.base) {                     // виды 1.7 — подсказки как в Windows-версии
+      const ser = k => `${k} ${k === 1 ? 'ряд' : k < 5 ? 'ряда' : 'рядов'}`;
+      const how = info.how === 'image' ? ' Это картинка: в PowerPoint её не поправить, данные — в заметках докладчика.'
+        : info.how === 'shapes' ? ' Собрана из фигур PowerPoint: подписи и цвета правятся в PowerPoint.' : '';
+      if (info.ok === false) return `Вид «${info.name}» на телефоне не рисуется — в презентации будет обычная диаграмма.`;
+      if (n && n < info.min) return `Для вида «${info.name}» нужно хотя бы ${ser(info.min)} — сейчас ${n}. Иначе будет обычная диаграмма.`;
+      if (info.xy && chart.categories.some(c => num(c) === null)) return `${info.hint} Подписи (первый столбец) должны быть числами — это ось X.`;
+      if (n > info.max) return `${info.hint} На диаграмму попадут первые ${ser(info.max)} из ${n}.${how}`;
+      return info.hint + how;
+    }
     if (['stacked', 'stacked100', 'bar_stacked', 'combo'].includes(t) && n < 2) return 'Для этого вида нужно хотя бы два ряда — с одним рядом будет обычная гистограмма.';
     if (['pie', 'doughnut'].includes(t) && n > 1) return `Круговая показывает один ряд — будет взят первый («${chart.series[0].name}»).`;
     if (t === 'radar' && nc < 3) return 'Лепестковой нужно хотя бы 3 подписи (оси).';
@@ -156,7 +167,7 @@ const Chart = (() => {
   async function preview() {
     if (!st || st.sh.closed) return;
     const box = st.pv, {chart} = toChart();
-    const icon = (CHART_KINDS.find(k => k[0] === st.type) || CHART_KINDS[0])[2];
+    const icon = chartIcon(st.type);
     if (!chart.series.length || !SlidesView.available()) {
       box.innerHTML = `<div class="ch-empty">${icon}<span>${chart.series.length ? esc(note()) : 'Заполните данные — здесь появится слайд с диаграммой.'}</span></div>`;
       return;
@@ -187,10 +198,23 @@ const Chart = (() => {
     body.appendChild(types);
     st.note = h('<p class="hint"></p>');
     body.appendChild(st.note);
+    let all = !CHART_KINDS.some(k => k[0] === st.type);
     const drawTypes = () => {
-      types.innerHTML = CHART_KINDS.map(([id, name, svg]) => `<button type="button" class="ch-type${id === st.type ? ' on' : ''}" data-t="${id}">${svg}<span>${esc(name)}</span></button>`).join('');
+      const btn = (id, name, svg) => `<button type="button" class="ch-type${id === st.type ? ' on' : ''}" data-t="${id}">${svg}<span>${esc(name)}</span></button>`;
+      let html = CHART_KINDS.map(([id, name, svg]) => btn(id, name, svg)).join('');
+      const ext = (CHART_CAT || []).filter(k => !k.base && k.ok !== false);
+      if (ext.length) {
+        html += `<button type="button" class="ch-more" aria-expanded="${all}">${all ? '▴ Свернуть' : `▾ Все виды: ещё ${ext.length}`}</button>`;
+        if (all) [...new Set(ext.map(k => k.family))].forEach(f => {
+          html += `<div class="ch-fam">${esc(f)}</div>` + ext.filter(k => k.family === f).map(k => btn(k.id, k.name, chartIcon(k.id))).join('');
+        });
+      }
+      types.innerHTML = html;
       $$('.ch-type', types).forEach(b => b.addEventListener('click', () => { st.type = b.dataset.t; drawTypes(); u2.classList.toggle('hidden', st.type !== 'combo'); changed(200); }));
+      const more = $('.ch-more', types);
+      if (more) more.addEventListener('click', () => { all = !all; drawTypes(); });
     };
+    loadChartTypes().then(() => { if (!st.sh.closed) drawTypes(); });
 
     body.appendChild(h('<div class="sec-h">Данные</div>'));
     const fileRow = h(`<div class="row2"><label class="btn ghost small" style="position:relative">📄 Из файла<input type="file" accept=".xlsx,.xlsm,.csv,.json,.txt,.docx,.pdf,.pptx" style="position:absolute;inset:0;opacity:0"></label>
