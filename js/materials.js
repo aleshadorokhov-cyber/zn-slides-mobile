@@ -14,11 +14,14 @@ const Materials = (() => {
       state.slides = Math.max(0, Math.min(60, state.slides + (+b.dataset.d) * (state.slides === 0 && +b.dataset.d > 0 ? 8 : 1)));
       if (state.slides < 3 && +b.dataset.d < 0) state.slides = 0;
       renderStepper();
+      saveSoon();
     }));
-    seg('#modeSeg', v => { state.mode = v; updateAi(); });
+    seg('#modeSeg', v => { state.mode = v; updateAi(); saveSoon(); });
+    // правка любого поля — работа сохранится сама
+    ['input', 'change'].forEach(ev => $('#scrMaterials').addEventListener(ev, e => { if (e.target.id !== 'fileInput' && (state.projectId || !workEmpty())) saveSoon(1500); }));
     $('#optExample').addEventListener('change', e => store('example', e.target.value));
     $('#iconShapeBox').replaceWith(Object.assign(Icons.shapesEl(), {id: 'iconShapeBox'}));
-    seg('#aiLevelSeg', v => { state.aiLevel = v; });
+    seg('#aiLevelSeg', v => { state.aiLevel = v; saveSoon(); });
     $('#optTpl').addEventListener('change', e => { store('tpl', e.target.value); syncTemplate(); });
     // запомненные параметры
     const o = restore('opts', {});
@@ -37,6 +40,33 @@ const Materials = (() => {
   }
   function setSeg(sel, v) { $$(sel + ' button').forEach(b => { b.classList.toggle('on', b.dataset.v === v); b.setAttribute('aria-checked', b.dataset.v === v); }); }
   function renderStepper() { $('#optSlidesOut').textContent = state.slides ? String(state.slides) : 'Авто'; }
+
+  /* поля экрана — в работе «Моих презентаций» (1.8): закрыли вкладку — при следующем открытии они на месте */
+  const FORM_SKIP = new Set(['fileInput', 'optTpl']);
+  const formEls = () => $$('#scrMaterials input[id], #scrMaterials select[id], #scrMaterials textarea[id]').filter(el => !FORM_SKIP.has(el.id) && el.type !== 'file');
+  function getForm() {
+    const o = {slides: state.slides, mode: state.mode, ai_level: state.aiLevel};
+    formEls().forEach(el => { o[el.id] = el.type === 'checkbox' ? el.checked : el.value; });
+    return o;
+  }
+  function setForm(o) {
+    o = o || {};
+    formEls().forEach(el => {
+      if (!(el.id in o)) return;
+      if (el.type === 'checkbox') el.checked = !!o[el.id];
+      else if (el.tagName === 'SELECT' && ![...el.options].some(x => x.value === o[el.id])) return;
+      else el.value = o[el.id];
+    });
+    if (typeof o.slides === 'number') state.slides = o.slides;
+    if (['rules', 'search', 'ai'].includes(o.mode)) state.mode = o.mode;
+    if (['fast', 'full'].includes(o.ai_level)) state.aiLevel = o.ai_level;
+    setSeg('#modeSeg', state.mode); setSeg('#aiLevelSeg', state.aiLevel);
+    renderStepper(); updateAi();
+  }
+  /* новая работа: поля доклада — пустые (мероприятие, шаблон и прочие привычные настройки остаются) */
+  function clearForm() {
+    ['optTitle', 'optSubtitle', 'optDate', 'optFocus', 'optRemarks'].forEach(id => { $('#' + id).value = ''; });
+  }
 
   function updateAi() {
     const l = state.status && state.status.llm;
@@ -58,7 +88,14 @@ const Materials = (() => {
       const ext = (f.name.split('.').pop() || '').toLowerCase();
       if (ext === 'json' && f.name.endsWith('.json')) {          // сохранённый план → открыть планом
         f.text().then(t => {
-          try { const sp = JSON.parse(t.replace(/^﻿/, '')); if (sp && Array.isArray(sp.slides)) { Plan.open(sp, null, 'План открыт из файла'); return; } } catch (e) { /* не план */ }
+          try {
+            const sp = JSON.parse(t.replace(/^﻿/, ''));
+            if (sp && Array.isArray(sp.slides)) {
+              if (state.spec) { saveProject(); state.projectId = null; SAVE.filesId = null; }   // другой план — новая работа, прежняя остаётся
+              Plan.open(sp, null, 'План открыт из файла');
+              return;
+            }
+          } catch (e) { /* не план */ }
           pushFile(f);
         });
         continue;
@@ -71,6 +108,7 @@ const Materials = (() => {
   function pushFile(f) {
     if (!state.files.some(x => x.name === f.name && x.size === f.size)) state.files.push(f);
     renderFiles();
+    filesChanged();
   }
   function renderFiles() {
     const ul = $('#fileList');
@@ -81,7 +119,7 @@ const Materials = (() => {
         <span class="fname"><b></b><small>${fmtSize(f.size)}</small></span>
         <button class="icon-btn" type="button" aria-label="Убрать файл">✕</button></li>`);
       $('b', li).textContent = f.name;
-      $('button', li).addEventListener('click', () => { state.files.splice(i, 1); renderFiles(); });
+      $('button', li).addEventListener('click', () => { state.files.splice(i, 1); renderFiles(); filesChanged(); });
       ul.appendChild(li);
     });
     $('#btnSample').classList.toggle('hidden', state.files.length > 0);
@@ -120,8 +158,9 @@ const Materials = (() => {
     Busy.on(aiLabel(o), {cancel: cancelEngine});
     try {
       const data = await runJob(sample ? '/api/sample' : '/api/analyze', fd, 'Анализ');
-      state.projectId = null;
+      await Work.forkFor((data.info || {}).sources || []);   // план по другим материалам — новая работа, прежняя остаётся
       Plan.open(data.spec, data, null);
+      if (data.info && data.info.keywords_auto) KW.autoQueued();
       const rd = (data.info && data.info.remarks_done) || [];
       toast(`План готов: ${data.spec.slides.length} слайдов` + (rd.length ? ` · по замечаниям: ${rd.join(', ')}` : ''), false, 5000);
       App.go('plan');
@@ -142,6 +181,7 @@ const Materials = (() => {
     const sh = openSheet({title: 'Справка Word', body, foot: go});
     go.onclick = async () => {
       store('author', r.author); store('phone', r.phone); store('pages', r.pages);
+      Me.toProfile(r.author, r.phone);            // исполнитель — и в профиле кабинета
       sh.close();
       const o = Object.assign(options(), {author: r.author, phone: r.phone, pages: Math.max(0, Math.min(30, parseInt(r.pages || '0', 10) || 0))});
       const fd = new FormData();
@@ -193,5 +233,5 @@ const Materials = (() => {
       : 'Вид и порядок слайдов — как у похожих слайдов ваших прежних презентаций. Добавьте их в «📚 Библиотеку материалов» (PowerPoint, .pptx).';
   }
 
-  return {init, analyze, report, updateAi, renderTemplates, template, addFiles, renderFiles, options, examples};
+  return {init, analyze, report, updateAi, renderTemplates, template, addFiles, renderFiles, options, examples, getForm, setForm, clearForm};
 })();

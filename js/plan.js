@@ -12,7 +12,7 @@ function slideTitle(s) {
 }
 
 const Plan = (() => {
-  function open(spec, data, msg) {
+  function open(spec, data, msg, opts) {
     if (!spec.meta || typeof spec.meta !== 'object') spec.meta = {};
     state.spec = spec;
     state.info = data ? data.info : null;
@@ -25,7 +25,7 @@ const Plan = (() => {
     }
     Thumbs.reset();
     render();
-    saveProject();
+    if (!(opts && opts.nosave)) saveProject();
     Check.soon();
     if (msg) { toast(msg); App.go('plan'); }
   }
@@ -47,6 +47,7 @@ const Plan = (() => {
     else if (info.mode_used) parts.push('по правилам');
     if (info.seconds) parts.push(`${String(info.seconds).replace('.', ',')} с`);
     $('#planMeta').textContent = parts.join(' · ');
+    KW.renderBar();                                   // тема доклада и ключевые слова материалов (1.8)
     const notes = $('#planNotes');
     const w = state.warnings || [];
     notes.classList.toggle('hidden', !w.length);
@@ -155,6 +156,7 @@ const Plan = (() => {
       Busy.off();
       const how = await saveFile(r.blob('application/vnd.openxmlformats-officedocument.presentationml.presentation'), name);
       if (how !== 'aborted') toast(`Готово: ${r.headers['x-slides'] || ''} слайдов · ${name}` + (w.length ? ` · ${w[0]}` : ''), false, 6000);
+      state.built = {name, at: Date.now()}; saveSoon(300);          // в «Моих презентациях» видно, что собрана
       if (w.length) { state.warnings = w; render(); }
     } catch (e) { toast(e.message, true, 9000); } finally { Busy.off(); }
   }

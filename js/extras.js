@@ -66,7 +66,7 @@ const Library = (() => {
         const ext = (e.name.split('.').pop() || '').toLowerCase();
         const row = h(`<div class="libm-row"><span class="ftype ${esc(ext)}">${esc(ext.toUpperCase().slice(0, 4))}</span><span class="fname"><b></b><small></small></span></div>`);
         $('b', row).textContent = e.name;
-        $('small', row).textContent = [date(e.added), size(e.size || 0), `фраз: ${fmtK(e.phrases || 0)}`, e.deck >= 2 ? `образец: ${plSlides(e.deck)}` : '', (e.warnings || [])[0] || ''].filter(Boolean).join(' · ');
+        $('small', row).textContent = [date(e.added), size(e.size || 0), `фраз: ${fmtK(e.phrases || 0)}`, e.deck >= 2 ? `образец: ${plSlides(e.deck)}` : '', (e.topics || []).length ? `🏷 ${e.topics.slice(0, 2).join(', ')}` : '', (e.warnings || [])[0] || ''].filter(Boolean).join(' · ');
         if (/\.pptx$/i.test(e.name)) {
           const star = h(`<button class="icon-btn star${e.ref ? ' on' : ''}" type="button" aria-label="${e.ref ? 'Эталон — снять отметку' : 'Сделать эталоном'}">${e.ref ? '★' : '☆'}</button>`);
           star.addEventListener('click', async () => {
@@ -136,8 +136,14 @@ const Phrases = (() => {
       <p class="hint" style="margin-top:0">Готовые предложения из материалов доклада и «📚 Библиотеки материалов». Модель поиска только находит их, сама ничего не пишет.</p>
       <div class="search"><input type="search" placeholder="Свои слова для поиска…" enterkeyhint="search"></div>
       <div class="row2" style="margin-top:8px"><button class="btn ghost small" type="button" data-a="find">Найти</button><button class="btn ghost small" type="button" data-a="auto">К слайду</button></div>
-      <p class="hint phr-note"></p><div class="phr-list"></div></details>`);
+      <div class="ph-kw"></div><p class="hint phr-note"></p><div class="phr-list"></div></details>`);
     const inp = $('input', box), note = $('.phr-note', box), list = $('.phr-list', box);
+    const kws = KW.forSlide(s);                       // ключевые слова материалов (1.8): нажатие — поиск по слову
+    if (kws.length) {
+      const kb = $('.ph-kw', box);
+      kb.innerHTML = '<span class="hint">Ключевые слова:</span>' + kws.map(k => `<button type="button" class="kw-tag" data-k="${esc(k)}">${esc(k)}</button>`).join('');
+      $$('button', kb).forEach(b => b.addEventListener('click', () => { inp.value = b.dataset.k; run(b.dataset.k); }));
+    }
     function show(items, msg) {
       note.textContent = msg || '';
       list.innerHTML = '';

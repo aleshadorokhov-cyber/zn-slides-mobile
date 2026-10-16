@@ -17,6 +17,7 @@ const App = (() => {
     $('#barTitle').textContent = tab === 'plan' && state.spec ? (state.spec.meta.title || 'План презентации') : TABS[tab].title;
     if (tab === 'view') View.render();
     if (tab === 'more') More.refresh();
+    if (state.projectId) saveSoon(1500);              // открытый раздел — тоже часть работы (1.8)
     updateCta();
     window.scrollTo(0, 0);
   }
@@ -46,14 +47,8 @@ const App = (() => {
     More.refresh();
   }
 
-  function newProject() {
-    state.spec = null; state.info = null; state.warnings = []; state.projectId = null; state.files = [];
-    store('lastProject', null);
-    Thumbs.reset();
-    $('#optTitle').value = ''; $('#optSubtitle').value = ''; $('#optDate').value = '';
-    Materials.renderFiles();
-    Plan.render();
-    go('materials');
+  async function newProject() {
+    await Work.newWork();                             // прежняя работа остаётся в «Моих презентациях»
     toast('Новая презентация: добавьте материалы');
   }
 
@@ -82,27 +77,18 @@ const App = (() => {
       Materials.updateAi();
       Library.load().catch(() => {});              // образцы для «Плана по образцу»
       store('booted', true);
-      await restoreLast();
+      await Me.load();                                // кабинет «Этот телефон» (1.8)
+      const hadWork = (await DB.all().catch(() => [])).length > 0;   // работал до версии 1.8 — обучение не навязываем
+      await Work.restoreLast();
       $('#splash').classList.add('gone');
       setTimeout(() => $('#splash').remove(), 500);
+      setTimeout(() => Tour.maybe(hadWork), 450);   // новичку — обучение на главном экране
     } catch (e) {
       sub.textContent = 'Не удалось запустить конструктор';
       $('#splashNote').textContent = e.message;
       return;
     }
     // движок мог перезапуститься (отмена долгой работы) — сведения о модели и шаблонах те же: они в хранилище
-  }
-  async function restoreLast() {
-    const id = restore('lastProject', null);
-    if (!id) return;
-    try {
-      const p = await DB.get(id);
-      if (!p || !p.spec) return;
-      state.projectId = p.id;
-      Plan.open(p.spec, {info: p.info, warnings: p.warnings}, null);
-      state.projectId = p.id;
-      go('plan');
-    } catch (e) { console.warn('restore', e); }
   }
 
   /* ---------------------------------------------------------------- обновления (service worker) */
@@ -136,12 +122,15 @@ const App = (() => {
     $$('#tabbar button').forEach(b => b.addEventListener('click', () => go(b.dataset.tab)));
     $$('[data-go]').forEach(b => b.addEventListener('click', () => go(b.dataset.go)));
     $('#barAction').addEventListener('click', () => More.theme());
+    $('#barMe').addEventListener('click', () => Me.open());
     window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); App.installPrompt = e; });
     // клавиатура на телефоне закрывает главную кнопку — прячем её, пока печатают
     if (window.visualViewport) visualViewport.addEventListener('resize', () => {
       document.body.classList.toggle('kb', window.innerHeight - visualViewport.height > 150);
     });
-    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && state.spec && state.dirty) saveProject(); });
+    // ушли со вкладки или закрывают её — работа записывается сразу (1.8)
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') Work.leave(); });
+    window.addEventListener('pagehide', () => Work.leave());
     Materials.init();
     Plan.init();
     More.init();

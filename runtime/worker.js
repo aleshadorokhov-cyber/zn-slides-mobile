@@ -167,7 +167,27 @@ function handle(msg) {
   if (method !== 'GET') dirty = true;
   // отложенные задания (анализ, справка) — после ответа, страница уже показывает ход работы
   try { M.run_pending(); } catch (e) { console.warn('job', e); }
+  idleSoon();
   return persist();
+}
+
+/* задания «когда свободно» (1.8: модель ИИ пополняет базу ключевых слов после анализа) — когда страница
+   IDLE_MS ничего не просит у движка: просмотр слайдов сразу после построения плана не ждёт модель */
+const IDLE_MS = 8000;
+let waiting = 0, idleTimer = null;
+function idleSoon() {
+  clearTimeout(idleTimer);
+  idleTimer = null;
+  try { if (!M || !M.idle_count || !M.idle_count()) return; } catch (e) { return; }
+  idleTimer = setTimeout(() => {
+    idleTimer = null;
+    if (waiting) { idleSoon(); return; }
+    queue = queue.then(() => {
+      try { M.run_idle(); } catch (e) { console.warn('idle', e); }
+      dirty = true;
+      return persist();
+    });
+  }, IDLE_MS);
 }
 
 const ready = start().catch(e => {
@@ -181,8 +201,10 @@ self.onmessage = ev => {
   if (msg && msg.type === 'req') {
     photoFile(msg).then(done => {
       if (done) return;
+      waiting++;
+      if (idleTimer) idleSoon();
       queue = queue.then(() => ready).then(() => Promise.all([pdfReady(msg), photosReady(msg)]))
-        .then(() => handle(msg)).catch(e => console.warn(e));
+        .then(() => handle(msg)).catch(e => console.warn(e)).finally(() => { waiting--; });
     });
   }
 };

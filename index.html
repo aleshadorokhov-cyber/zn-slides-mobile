@@ -29,9 +29,10 @@ try { var d = document.documentElement, th = JSON.parse(localStorage.getItem('zn
     <span class="logo" aria-hidden="true"></span>
     <div class="appbar-titles">
       <div class="appbar-title" id="barTitle">Конструктор презентаций</div>
-      <div class="appbar-sub" id="barSub">Корпоративный шаблон АО «Зарубежнефть»</div>
+      <div class="appbar-sub"><span class="save-state" id="saveState" aria-live="polite"></span><span id="barSub">Корпоративный шаблон АО «Зарубежнефть»</span></div>
     </div>
   </div>
+  <button class="appbar-btn" id="barMe" type="button" aria-label="Личный кабинет: мои презентации и профиль" title="Личный кабинет"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7"/></svg></button>
   <button class="appbar-btn" id="barAction" type="button" aria-label="Вид: тема и размер текста" title="Вид"><svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 0 18c1.1 0 1.8-.8 1.8-1.7 0-.5-.2-.9-.5-1.2-.3-.3-.5-.7-.5-1.2 0-.9.8-1.7 1.8-1.7H17a4 4 0 0 0 4-4C21 6.6 17 3 12 3z"/><circle cx="7.5" cy="11" r="1.3"/><circle cx="10.5" cy="7" r="1.3"/><circle cx="15" cy="7.5" r="1.3"/></svg></button>
 </header>
 
@@ -54,6 +55,7 @@ try { var d = document.documentElement, th = JSON.parse(localStorage.getItem('zn
     <div class="chips-row mat-links">
       <button type="button" class="chip-btn" data-m="library">📚 Библиотека материалов</button>
       <button type="button" class="chip-btn" data-m="dict">📖 Словарь Компании</button>
+      <button type="button" class="chip-btn" data-m="keywords">🏷 Ключевые слова</button>
     </div>
 
     <div class="card">
@@ -125,6 +127,7 @@ try { var d = document.documentElement, th = JSON.parse(localStorage.getItem('zn
         <div class="plan-title" id="planTitle"></div>
         <div class="plan-meta" id="planMeta"></div>
       </div>
+      <div class="topic-bar hidden" id="topicBar"></div>
       <div class="notes hidden" id="planNotes"></div>
       <div class="chips-row">
         <button type="button" class="chip-btn" id="btnCheck">✔ Проверить</button>
@@ -155,11 +158,12 @@ try { var d = document.documentElement, th = JSON.parse(localStorage.getItem('zn
   <section class="screen hidden" id="scrMore">
     <div class="menu-group">
       <div class="menu-h">Работа</div>
-      <button class="menu-item" type="button" data-m="projects"><i>🗂</i><span><b>Мои презентации</b><small>Планы, сохранённые на этом телефоне</small></span></button>
+      <button class="menu-item" type="button" data-m="projects"><i>👤</i><span><b>Личный кабинет</b><small>Мои презентации, профиль, обучение — работа сохраняется сама</small></span></button>
       <button class="menu-item" type="button" data-m="openPlan"><i>📂</i><span><b>Открыть план</b><small>Файл .plan.json — из Windows-версии или с телефона</small></span></button>
       <button class="menu-item" type="button" data-m="report"><i>📝</i><span><b>Справка Word</b><small>Краткое содержание материалов в .docx</small></span></button>
       <button class="menu-item" type="button" data-m="library"><i>📚</i><span><b>Библиотека материалов</b><small>Прежние доклады и презентации: готовые фразы, образцы и эталоны</small></span></button>
       <button class="menu-item" type="button" data-m="dict"><i>📖</i><span><b>Словарь Компании</b><small>Как правильно пишутся общества, месторождения, должности</small></span></button>
+      <button class="menu-item" type="button" data-m="keywords"><i>🏷</i><span><b>Ключевые слова</b><small>База слов по темам: тема доклада и подсказки для поиска фраз</small></span></button>
       <button class="menu-item" type="button" data-m="photos"><i>📷</i><span><b>Библиотека картинок</b><small>Фото, рисунки и свои снимки из галереи или с камеры</small></span></button>
     </div>
     <div class="menu-group">
@@ -174,7 +178,7 @@ try { var d = document.documentElement, th = JSON.parse(localStorage.getItem('zn
       <button class="menu-item" type="button" data-m="help"><i>❓</i><span><b>Как это работает</b><small>Коротко о шагах и возможностях</small></span></button>
       <button class="menu-item" type="button" data-m="storage"><i>💽</i><span><b>Память телефона</b><small id="moreStorageSub">Сколько места занимает конструктор</small></span></button>
     </div>
-    <p class="about" id="aboutLine">Конструктор презентаций · версия 1.7.2 для телефона</p>
+    <p class="about" id="aboutLine">Конструктор презентаций · версия 1.8 для телефона</p>
     <div class="cta-space"></div>
   </section>
 </main>
@@ -233,6 +237,7 @@ try { var d = document.documentElement, th = JSON.parse(localStorage.getItem('zn
 <script src="js/check.js"></script>
 <script src="js/extras.js"></script>
 <script src="js/more.js"></script>
+<script src="js/account.js"></script>
 <script src="js/main.js"></script>
 </body>
 </html>

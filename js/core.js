@@ -35,6 +35,7 @@ const Busy = {
     c.classList.toggle('hidden', !opts.cancel);
     c.disabled = false; c.textContent = 'Отменить';
     c.onclick = opts.cancel ? () => { c.disabled = true; c.textContent = 'Отменяю…'; opts.cancel(); } : null;
+    if (typeof KW !== 'undefined' && KW.running) $('#busyDetail').insertAdjacentHTML('beforeend', '<div class="busy-kw">Сначала модель ИИ допишет базу ключевых слов — это займёт до минуты.</div>');
     $('#busy').classList.remove('hidden');
   },
   progress(view) {
@@ -185,48 +186,121 @@ function field(label, obj, key, opts = {}) {
   return wrap;
 }
 
-/* ---------------------------------------------------------------- планы в телефоне (IndexedDB) */
+/* ---------------------------------------------------------------- работы в телефоне (IndexedDB) */
+// p — работы «Моих презентаций»: {id, title, updated, slides, spec (или null — план ещё не построен), info, warnings,
+//     opts (поля экрана «Материалы»), names (имена материалов), tab}; f — файлы материалов работы: {id, files: [File]}.
+// Файлы пишутся отдельно и только когда меняются: план сохраняется после каждой правки, а материалы бывают большими.
 const DB = {
   db: null,
   open() {
     if (this.db) return this.db;
     this.db = new Promise((res, rej) => {
-      const r = indexedDB.open('znm-projects', 1);
-      r.onupgradeneeded = () => r.result.createObjectStore('p', {keyPath: 'id'});
+      const r = indexedDB.open('znm-projects', 2);
+      r.onupgradeneeded = () => {
+        const db = r.result;
+        if (!db.objectStoreNames.contains('p')) db.createObjectStore('p', {keyPath: 'id'});
+        if (!db.objectStoreNames.contains('f')) db.createObjectStore('f', {keyPath: 'id'});
+      };
       r.onsuccess = () => res(r.result);
       r.onerror = () => rej(r.error);
     });
     return this.db;
   },
-  async tx(mode, fn) {
+  async tx(mode, fn, store = 'p') {
     const db = await this.open();
     return new Promise((res, rej) => {
-      const t = db.transaction('p', mode); const st = t.objectStore('p');
+      const t = db.transaction(store, mode); const st = t.objectStore(store);
       const out = fn(st);
       t.oncomplete = () => res(out && out.result !== undefined ? out.result : out);
       t.onerror = () => rej(t.error);
+      t.onabort = () => rej(t.error);
     });
   },
   put(p) { return this.tx('readwrite', st => st.put(p)); },
   get(id) { return this.tx('readonly', st => st.get(id)); },
-  del(id) { return this.tx('readwrite', st => st.delete(id)); },
+  del(id) { return Promise.all([this.tx('readwrite', st => st.delete(id)), this.tx('readwrite', st => st.delete(id), 'f').catch(() => {})]); },
   all() { return this.tx('readonly', st => st.getAll()); },
+  putFiles(id, files) { return this.tx('readwrite', st => (files.length ? st.put({id, files: files.slice()}) : st.delete(id)), 'f'); },
+  async getFiles(id) {
+    try { const r = await this.tx('readonly', st => st.get(id), 'f'); return r && Array.isArray(r.files) ? r.files : []; } catch (e) { return []; }
+  },
 };
 let saveTimer = null;
 function planChanged(opts = {}) {
   state.dirty = true;
-  clearTimeout(saveTimer);
-  saveTimer = setTimeout(saveProject, 800);
+  saveSoon();
   if (!opts.quiet) { Plan.render(); }
   Check.soon();                       // рецензент и сверка чисел: значки ⚠ и 🔢 у слайдов
 }
+/* любая правка (план, материалы, параметры) — сохранить через секунду */
+function saveSoon(ms = 900) {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(saveProject, ms);
+}
+const SAVE = {filesId: null, busy: null, again: false};
+function workTitle() {
+  const t = (state.spec && state.spec.meta.title) || $('#optTitle').value.trim() || (state.files[0] ? state.files[0].name.replace(/\.[^.]+$/, '') : '');
+  return t || 'Без названия';
+}
+function workRecord() {
+  return {id: state.projectId, title: workTitle(), updated: Date.now(), slides: state.spec ? state.spec.slides.length : 0,
+    spec: state.spec, info: state.info, warnings: state.warnings, opts: Materials.getForm(),
+    names: state.files.map(f => f.name), tab: state.tab, built: state.built || null};
+}
+const workEmpty = () => !state.spec && !state.files.length && !$('#optTitle').value.trim() && !$('#optRemarks').value.trim();
 async function saveProject() {
-  if (!state.spec) return;
+  clearTimeout(saveTimer); saveTimer = null;
+  if (SAVE.busy) { SAVE.again = true; return SAVE.busy; }
+  if (!state.projectId && workEmpty()) return;               // пустая работа не сохраняется, пока в ней ничего нет
   if (!state.projectId) state.projectId = 'p' + Date.now().toString(36);
-  try {
-    await DB.put({id: state.projectId, title: state.spec.meta.title || 'Презентация', updated: Date.now(),
-      slides: state.spec.slides.length, spec: state.spec, info: state.info, warnings: state.warnings});
-    store('lastProject', state.projectId);
-    state.dirty = false;
-  } catch (e) { console.warn('save', e); }
+  const rec = workRecord();
+  Work.mark('saving');
+  SAVE.busy = (async () => {
+    try {
+      await DB.put(rec);
+      if (SAVE.filesId !== rec.id) { await DB.putFiles(rec.id, state.files); SAVE.filesId = rec.id; }
+      store('lastProject', rec.id);
+      Work.dropCopy(rec.id);
+      state.dirty = false;
+      Work.mark('ok');
+    } catch (e) { console.warn('save', e); Work.mark('err', e); }
+    finally {
+      SAVE.busy = null;
+      if (SAVE.again) { SAVE.again = false; saveSoon(300); }
+    }
+  })();
+  return SAVE.busy;
+}
+/* материалы изменились — файлы работы переписываются при следующем сохранении */
+function filesChanged() { SAVE.filesId = null; saveSoon(); }
+
+/* окно с полем ввода (вместо prompt: на телефоне он мелкий и без крестика) */
+function promptSheet(title, value = '', okText = 'Готово', opts = {}) {
+  return new Promise(res => {
+    const o = {v: value};
+    const body = h('<div></div>');
+    if (opts.hint) body.appendChild(h(`<p class="hint" style="margin-top:0">${esc(opts.hint)}</p>`));
+    const f = field(opts.label || '', o, 'v', {placeholder: opts.placeholder || ''});
+    if (!opts.label) $('span', f).remove();
+    body.appendChild(f);
+    const ok = h(`<button class="btn primary">${esc(okText)}</button>`);
+    let done = false;
+    const sh = openSheet({title, body, foot: ok, onClose: () => { if (!done) res(null); }});
+    const inp = $('input', f);
+    inp.maxLength = opts.max || 120;
+    inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); ok.click(); } });
+    ok.onclick = () => { done = true; sh.close(); res(o.v.trim() || null); };
+    setTimeout(() => { inp.focus(); inp.select(); }, 80);
+  });
+}
+
+function plural(n, a, b, c) { const m = n % 100, k = n % 10; return m > 10 && m < 20 ? c : k === 1 ? a : (k > 1 && k < 5 ? b : c); }
+const lowRu = t => String(t || '').toLowerCase().replace(/ё/g, 'е');
+function fmtWhen(ms) {
+  if (!ms) return '';
+  const d = new Date(ms), now = new Date();
+  const hm = d.toLocaleTimeString('ru-RU', {hour: '2-digit', minute: '2-digit'});
+  const day = x => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const diff = Math.round((day(now) - day(d)) / 86400000);
+  return diff === 0 ? `сегодня ${hm}` : (diff === 1 ? `вчера ${hm}` : `${d.toLocaleDateString('ru-RU', {day: 'numeric', month: 'short'})} ${hm}`);
 }

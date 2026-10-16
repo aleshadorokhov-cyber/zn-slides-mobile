@@ -517,57 +517,8 @@ const More = (() => {
     });
   }
 
-  /* ---------------------------------------------------------------- мои презентации */
-  async function projects() {
-    const body = h('<div></div>');
-    const nu = h('<button class="btn primary" type="button">＋ Новая презентация</button>');
-    const sh = openSheet({title: 'Мои презентации', full: true, back: true, body, foot: nu});
-    nu.addEventListener('click', () => { sh.close(); App.newProject(); });
-    async function draw() {
-      const all = (await DB.all().catch(() => [])).sort((a, b) => b.updated - a.updated);
-      body.innerHTML = '';
-      if (!all.length) { body.appendChild(h('<div class="empty"><h2>Пока пусто</h2><p>Планы сохраняются здесь сами, как только вы их построите или откроете.</p></div>')); return; }
-      body.appendChild(h('<p class="hint" style="margin-top:0">Планы хранятся только на этом телефоне. Чтобы перенести план на компьютер — «Сохранить файлом» и откройте его в Windows-версии.</p>'));
-      all.forEach(p => {
-        const s0 = (p.spec.slides || []).find(s => s.layout !== 'title') || (p.spec.slides || [])[0] || {layout: 'title'};
-        const c = h(`<div class="proj" role="button" tabindex="0"><div class="pic">${thumbSvg(p.spec.slides && p.spec.slides[0] ? p.spec.slides[0].layout : 'title')}</div>
-          <div class="t"><b></b><small></small></div><button class="icon-btn" type="button" aria-label="Действия">⋯</button></div>`);
-        $('b', c).textContent = p.title || 'Презентация';
-        $('small', c).textContent = `${p.slides} слайдов · ${new Date(p.updated).toLocaleString('ru-RU', {day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit'})}${p.id === state.projectId ? ' · открыта' : ''}`;
-        c.addEventListener('click', e => { if (!e.target.closest('.icon-btn')) { sh.close(); openProject(p); } });
-        $('.icon-btn', c).addEventListener('click', () => projMenu(p, draw, sh));
-        body.appendChild(c);
-        void s0;
-      });
-    }
-    draw();
-  }
-  function openProject(p) {
-    state.projectId = p.id;
-    Plan.open(p.spec, {info: p.info, warnings: p.warnings}, null);
-    state.projectId = p.id;
-    App.go('plan');
-    toast(`Открыт план «${p.title}»`);
-  }
-  function projMenu(p, redraw, parent) {
-    const body = h('<div class="menu-group" style="margin:0"></div>');
-    const sh = openSheet({title: p.title || 'Презентация', body});
-    [['open', '📂', 'Открыть'], ['dup', '⧉', 'Сделать копию'], ['file', '💾', 'Сохранить файлом (.plan.json)'], ['del', '🗑', 'Удалить']].forEach(([a, ic, t]) => {
-      const b = h(`<button class="menu-item" type="button"><i>${ic}</i><span><b>${esc(t)}</b></span></button>`);
-      b.addEventListener('click', async () => {
-        sh.close();
-        if (a === 'open') { parent.close(); openProject(p); }
-        if (a === 'dup') { await DB.put(Object.assign(clone(p), {id: 'p' + Date.now().toString(36), title: p.title + ' (копия)', updated: Date.now()})); redraw(); toast('Копия сохранена'); }
-        if (a === 'file') saveFile(new Blob([JSON.stringify(p.spec, null, 2)], {type: 'application/json'}), (p.title || 'план').replace(/[\\/:*?"<>|]+/g, ' ').slice(0, 60) + '.plan.json');
-        if (a === 'del' && await confirmSheet(`Удалить план «${p.title}» с телефона?`, 'Удалить', true)) {
-          await DB.del(p.id);
-          if (state.projectId === p.id) state.projectId = null;
-          redraw(); toast('План удалён');
-        }
-      });
-      body.appendChild(b);
-    });
-  }
+  /* ---------------------------------------------------------------- мои презентации — в личном кабинете (1.8) */
+  function projects() { return Me.open(); }
 
   /* ---------------------------------------------------------------- вид: тема и размер текста (как «🎨 Вид» в Windows 1.7.1) */
   // [id, название, [фон, окно, текст]] — образец в окне «Вид»; сами цвета — в app.css (:root[data-theme])
@@ -672,8 +623,14 @@ const More = (() => {
       <h4>Только в Windows-версии</h4><p>Автопилот (папка «Входящие»), поиск и установка моделей ИИ на компьютере, 3D-модели, проверка готового файла по картинкам слайдов, фирменный шрифт интерфейса (на телефоне — системный шрифт, он сделан для экрана). Подробности — в инструкции к мобильной версии.</p>
       <h4>Фраза в документе</h4><p>У найденной фразы («🔎 Подходящие фразы» в редакторе слайда) нажмите на её текст или на «📄 В документе»: откроется документ, из которого она взята, с заголовками, списками и таблицами. Сама фраза выделена жёлтым, другие найденные из того же документа — голубым, ▲ ▼ переходят между ними. У Word и PDF кнопка внизу даёт копию самого файла с теми же выделениями: её можно открыть в Word, «Файлах» или переслать. То же есть у чисел во вкладке «🔢 Числа» окна «✔ Проверить». Материалы доклада хранятся для этого 7 дней, фразы из «📚 Библиотеки материалов» открываются всегда.</p>
       <h4>Вид</h4><p>Кнопка 🎨 вверху или «Ещё» → «Вид»: семь тем (светлая, тёмная, фирменная синяя, графит, тёплая и две контрастные) или «Как в телефоне», и размер текста — обычный, крупный или очень крупный. В каждом окне справа вверху есть крестик ✕, он закрывает окно.</p>
+      <h4>Личный кабинет</h4><p>Кнопка 👤 вверху или «Ещё» → «Личный кабинет»: «Мои презентации» (открыть, переименовать, копия, сохранить файлом, удалить, «＋ Новая презентация»), профиль — ФИО и телефон для справки Word, вид и обучение. Кабинет хранится в этом телефоне: у каждого телефона свой, поэтому вход по имени и паролю на телефоне не нужен (в Windows-версии он есть).</p>
+      <h4>Автосохранение</h4><p>План, материалы и поля экрана «Материалы» сохраняются сами — через секунду после правки, при переходе в другое приложение и при закрытии вкладки. Вверху видно «✓ Сохранено» и время. Открыли конструктор снова — работа на месте. План по другим материалам — новая презентация в кабинете, прежняя остаётся.</p>
+      <h4>Ключевые слова</h4><p>«🏷 Ключевые слова» на экране «Материалы» или в «Ещё»: база слов по 16 темам (геологоразведка, бурение, добыча, шельф, переработка, энергоэффективность, экология, безопасность, цифровизация, финансы и др.). По ней над планом показывается тема доклада и ключевые слова материалов, а в «🔎 Подходящих фразах» — слова для поиска одним нажатием. Модель ИИ пополняет базу сама после построения плана (только локальная модель, когда телефон свободен) или по кнопке «🤖 Пополнить из материалов»; без модели — «Предложить без ИИ». Слова можно добавлять, переносить между темами и удалять, базу — выгрузить и загрузить файлом CSV.</p>
+      <h4>Обучение</h4><p>При первом открытии на главном экране показываются шаги: материалы, параметры, построение плана, план, просмотр и скачивание, кабинет. Пройти снова — кнопка ниже или в личном кабинете.</p>
       <h4>Перенос на компьютер</h4><p>«Сохранить план» даёт файл .plan.json — его открывает и Windows-версия, и наоборот.</p>`;
-    openSheet({title: 'Как это работает', body});
+    const tour = h('<button class="btn ghost" type="button">🎓 Показать обучение</button>');
+    tour.addEventListener('click', () => { closeAllSheets(); Tour.start(); });
+    openSheet({title: 'Как это работает', body, foot: tour});
   }
 
   /* ---------------------------------------------------------------- память */
@@ -709,6 +666,7 @@ const More = (() => {
       if (m === 'photos') Pictures.openLibrary();
       if (m === 'library') Library.open();
       if (m === 'dict') Dict.open();
+      if (m === 'keywords') KW.open();
       if (m === 'theme') theme();
       if (m === 'install') install();
       if (m === 'help') help();

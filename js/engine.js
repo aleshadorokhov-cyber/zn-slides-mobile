@@ -23,6 +23,8 @@ const Engine = (() => {
           answerLLM(m);
         } else if (m.type === 'fatal') {
           bootSubs.forEach(f => f(m)); reject(new Error(m.error));
+        } else if (m.type === 'job' && m.kind === 'kw') {        // модель пополняет базу ключевых слов (1.8)
+          if (typeof KW !== 'undefined') KW.onEngine(m);
         } else if (m.type === 'job') {
           const j = jobs.get(m.job);
           if (j) {
@@ -100,6 +102,7 @@ const Engine = (() => {
     for (const j of jobs.values()) j.resolve({state: 'cancelled', error: 'Отменено.'});
     jobs.clear();
     worker = null; readyInfo = null; sab = null;
+    if (typeof KW !== 'undefined') KW.engineRestarted();
     return spawn();
   }
 
