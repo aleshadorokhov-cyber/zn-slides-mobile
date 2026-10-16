@@ -12,6 +12,10 @@
 | Pyodide 0.25 | Python в браузере (папка runtime/pyodide) | MPL-2.0 | https://github.com/pyodide/pyodide/blob/main/LICENSE |
 | Python 3.11 (в составе Pyodide) | движок конструктора | PSF License | https://docs.python.org/3/license.html |
 
+Фото библиотеки (папка `photos/`): 158 снимков с Викисклада под лицензиями CC BY, CC BY-SA, CC0 и
+общественное достояние. Автор, лицензия и страница каждого снимка — в `photos/CREDITS.txt`;
+при выборе фото конструктор сам пишет автора в заметки слайда.
+
 Библиотеки Python движка (архив runtime/site-*.zip) — те же, что в Windows-версии:
 Flask, Werkzeug, Jinja2, MarkupSafe, itsdangerous, click, blinker (BSD-3-Clause), python-pptx,
 python-docx, openpyxl, et_xmlfile, XlsxWriter, typing_extensions (MIT / BSD / PSF), Pillow

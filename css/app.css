@@ -297,11 +297,12 @@ input:focus, select:focus, textarea:focus { border-color: var(--blue); box-shado
 .tabs-row::-webkit-scrollbar { display: none; }
 .tabs-row button { flex: none; min-height: 38px; padding: 6px 13px; border-radius: 19px; border: 1px solid var(--border-strong); background: var(--surface); font-size: 13.5px; font-weight: 600; white-space: nowrap; }
 .tabs-row button.on { background: var(--blue); border-color: var(--blue); color: #fff; }
-.pic-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.pic-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .pic-tile { position: relative; border-radius: 12px; border: 2px solid var(--border); background: #fff; padding: 6px 4px 4px; text-align: center; color: #13233A; }
 .pic-tile.on { border-color: var(--green); box-shadow: 0 0 0 2px rgba(75, 175, 70, .3); }
 .pic-tile .im { aspect-ratio: 1; display: grid; place-items: center; }
 .pic-tile img { max-width: 100%; max-height: 100%; display: block; }
+.pic-tile img.ph { width: 100%; height: auto; aspect-ratio: 1; max-height: none; object-fit: cover; border-radius: 8px; }
 .pic-tile span { display: block; font-size: 11px; line-height: 1.2; margin-top: 3px; height: 2.4em; overflow: hidden; }
 .pic-tile .ok { position: absolute; top: 4px; right: 4px; width: 22px; height: 22px; border-radius: 50%; background: var(--green); color: #fff; font-size: 13px; line-height: 22px; display: none; }
 .pic-tile.on .ok { display: block; }
@@ -387,7 +388,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--blue); box-shado
 @keyframes drop { from { transform: translateY(-20px); opacity: 0; } }
 
 @media (min-width: 700px) {
-  .pic-grid { grid-template-columns: repeat(5, 1fr); }
+  .pic-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
   .lay-grid { grid-template-columns: repeat(3, 1fr); }
   .slide { grid-template-columns: 180px 1fr; }
   .sheet:not(.full) { width: 640px; margin: 0 auto; border-radius: 22px 22px 0 0; }
@@ -432,3 +433,6 @@ body.kb .cta, body.kb .tabbar { display: none; }
 .pic-big { border-radius: 14px; overflow: hidden; background: var(--on); aspect-ratio: 4 / 3; display: flex; align-items: center; justify-content: center; }
 .pic-big > img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
 .pic-big-name { margin: 10px 2px 0; font-weight: 600; }
+.pic-credit{margin:4px 2px 14px;font-size:13px;color:var(--muted);line-height:1.4}
+.pic-credit a{color:var(--link)}
+.now-chip img.ph { object-fit: cover; }

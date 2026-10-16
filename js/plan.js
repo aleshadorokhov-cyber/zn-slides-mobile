@@ -122,6 +122,7 @@ const Plan = (() => {
     if (!state.spec) return;
     Busy.on('Собираю презентацию…', {detail: 'Корпоративный шаблон, слайды, диаграммы и картинки'});
     try {
+      await Pictures.syncAllCredits();
       const r = await Engine.post('/api/build', {spec: state.spec});
       if (!r.ok) throw new Error(r.json().error || 'Не удалось собрать презентацию');
       let w = [];
