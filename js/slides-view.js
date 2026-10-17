@@ -67,8 +67,9 @@ const SlidesView = (() => {
     try { rec.handle.dispose(); } catch (e) { /* уже */ }
     ro.unobserve(rec.box);
     if (--rec.deck.live <= 0) {                 // слайды этой презентации больше не показаны — картинки освобождаются
-      for (const u of rec.deck.cache.values()) URL.revokeObjectURL(u);
+      const urls = [...rec.deck.cache.values()];
       rec.deck.cache.clear();
+      setTimeout(() => urls.forEach(u => URL.revokeObjectURL(u)), 8000);   // убранный слайд мог ещё догружать картинку
     }
   }
   function sweep() { for (const r of live) if (!r.box.isConnected) drop(r); }

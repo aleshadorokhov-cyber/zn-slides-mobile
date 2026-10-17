@@ -17,7 +17,10 @@
 <script>/* тема и размер текста до загрузки стилей — без мигания: выбор человека или как в телефоне */
 try { var d = document.documentElement, th = JSON.parse(localStorage.getItem('znm.theme') || '""'), fz = JSON.parse(localStorage.getItem('znm.fz') || '""');
   if (/^(light|dark|navy|graphite|sand|contrast|contrast-light)$/.test(th)) d.setAttribute('data-theme', th);
-  if (/^(m|l|xl)$/.test(fz)) d.setAttribute('data-fz', fz); } catch (e) {}</script>
+  if (/^(m|l|xl)$/.test(fz)) d.setAttribute('data-fz', fz);
+  var ic = JSON.parse(localStorage.getItem('znm.ic') || '""'), tb = JSON.parse(localStorage.getItem('znm.thumb') || '""');
+  if (/^(m|l|xl)$/.test(ic)) d.setAttribute('data-ic', ic);
+  if (/^(s|m|l)$/.test(tb)) d.setAttribute('data-thumb', tb); } catch (e) {}</script>
 <link rel="stylesheet" href="css/app.css">
 </head>
 <body>
@@ -39,9 +42,17 @@ try { var d = document.documentElement, th = JSON.parse(localStorage.getItem('zn
 <main id="screens">
   <!-- ============ 1. Материалы ============ -->
   <section class="screen" id="scrMaterials">
-    <div class="hero-card">
+    <div class="hero-card" id="hero">
       <h1>Презентация из документов</h1>
       <p>Добавьте Word, PDF, PowerPoint или Excel — конструктор предложит план слайдов в корпоративном шаблоне.</p>
+    </div>
+    <!-- 1.9: текущая работа — сохранить сейчас или начать заново -->
+    <div class="work-bar hidden" id="workBar">
+      <div class="wb-t"><small>Текущая презентация</small><b id="wbTitle"></b></div>
+      <div class="wb-btns">
+        <button type="button" class="btn ghost small" id="btnSaveNow"><span class="sv-ico" aria-hidden="true">💾</span> Сохранить</button>
+        <button type="button" class="btn ghost small" id="btnReset"><span aria-hidden="true">↺</span> Начать заново</button>
+      </div>
     </div>
 
     <label class="drop" id="drop">
@@ -58,58 +69,73 @@ try { var d = document.documentElement, th = JSON.parse(localStorage.getItem('zn
       <button type="button" class="chip-btn" data-m="keywords">🏷 Ключевые слова</button>
     </div>
 
-    <div class="card">
-      <h2 class="card-h">Титульный слайд</h2>
-      <label class="fld"><span>Название</span><input id="optTitle" placeholder="Из документа, если не указать" autocomplete="off"></label>
-      <label class="fld"><span>Подзаголовок</span><input id="optSubtitle" autocomplete="off"></label>
-      <label class="fld"><span>Мероприятие</span><input id="optEvent" placeholder="Например: Доклад на НТС" autocomplete="off"></label>
-      <label class="fld"><span>Дата</span><input id="optDate" placeholder="Сегодняшняя, если не указать" autocomplete="off"></label>
-    </div>
+    <!-- 1.9: карточки сворачиваются; свёрнутая коротко говорит, что внутри -->
+    <section class="card fold" data-fold="look" id="cardLook">
+      <h2 class="fold-h"><span class="fold-name">Оформление</span><span class="fold-sum" id="sumLook"></span></h2>
+      <div class="fold-b">
+        <label class="fld"><span>Шаблон оформления</span><select id="optTpl"></select></label>
+        <button type="button" class="link-btn tpl-more" data-m="templates">Свои шаблоны: загрузить, отметить слайды и цвета ›</button>
+        <div id="iconShapeBox"></div>
+        <label class="sw"><input type="checkbox" id="optGrad" checked><span>Градиент в фигурах<small class="sw-sub">плавный переход цвета; выключите — фигуры одним цветом</small></span></label>
+      </div>
+    </section>
 
-    <div class="card">
-      <h2 class="card-h">Слайды</h2>
-      <div class="stepper-row">
-        <span>Сколько слайдов</span>
-        <div class="stepper" id="slidesStepper">
-          <button type="button" data-d="-1" aria-label="Меньше">−</button>
-          <output id="optSlidesOut">Авто</output>
-          <button type="button" data-d="1" aria-label="Больше">+</button>
-        </div>
+    <section class="card fold" data-fold="titles" data-fold-default="1" id="cardTitles">
+      <h2 class="fold-h"><span class="fold-name">Титульный слайд</span><span class="fold-sum" id="sumTitles"></span></h2>
+      <div class="fold-b">
+        <label class="fld"><span>Название</span><input id="optTitle" placeholder="Из документа, если не указать" autocomplete="off"></label>
+        <label class="fld"><span>Подзаголовок</span><input id="optSubtitle" autocomplete="off"></label>
+        <label class="fld"><span>Мероприятие</span><input id="optEvent" placeholder="Например: Доклад на НТС" autocomplete="off"></label>
+        <label class="fld"><span>Дата</span><input id="optDate" placeholder="Сегодняшняя, если не указать" autocomplete="off"></label>
       </div>
-      <label class="fld"><span>Шаблон оформления</span><select id="optTpl"></select></label>
-      <div class="fld"><span>Как построить план</span>
-        <div class="seg" id="modeSeg" role="radiogroup">
-          <button type="button" data-v="rules" class="on" role="radio">По правилам</button>
-          <button type="button" data-v="search" role="radio">+ поиск фраз</button>
-          <button type="button" data-v="ai" role="radio">С моделью ИИ</button>
-        </div>
-        <p class="hint hidden" id="searchInfo"></p>
-      </div>
-      <div class="ai-box hidden" id="aiBox">
-        <div class="ai-info" id="aiInfo"></div>
-        <div class="seg small" id="aiLevelSeg">
-          <button type="button" data-v="fast" class="on">Быстро: структура</button>
-          <button type="button" data-v="full">Полностью: и тексты</button>
-        </div>
-        <label class="fld"><span>Акценты для ИИ</span><textarea id="optFocus" rows="2" placeholder="Например: упор на экономический эффект"></textarea></label>
-      </div>
-    </div>
+    </section>
 
-    <details class="card more">
-      <summary>Дополнительно</summary>
-      <label class="fld"><span>Содержание</span><select id="optAgenda"><option value="auto">Авто</option><option value="yes">Да</option><option value="no">Нет</option></select></label>
-      <label class="fld"><span>Разделители разделов</span><select id="optSections"><option value="auto">Авто</option><option value="yes">Да</option><option value="no">Нет</option></select></label>
-      <label class="fld"><span>Выделенные в документе фрагменты</span><select id="optMarks">
-        <option value="priority">Важнее остального</option><option value="only">Только они</option><option value="ignore">Не учитывать</option></select></label>
-      <label class="fld"><span>План по образцу</span><select id="optExample"><option value="auto">похожая презентация из библиотеки</option><option value="off">не использовать</option></select>
-        <span class="hint" id="exampleHint">Вид и порядок слайдов — как у похожих слайдов ваших прежних презентаций PowerPoint из «📚 Библиотеки материалов».</span></label>
-      <div id="iconShapeBox"></div>
-      <label class="sw"><input type="checkbox" id="optConcl" checked><span>Итоговый слайд «Ключевые тезисы»</span></label>
-      <label class="sw"><input type="checkbox" id="optPics" checked><span>Картинки из библиотеки к подходящим слайдам</span></label>
-      <label class="sw"><input type="checkbox" id="optDataTables"><span>Таблицы с данными к диаграммам</span></label>
-      <label class="sw"><input type="checkbox" id="optAnim" checked><span>Анимации и переходы</span></label>
-      <label class="fld"><span>Замечания ко всей презентации</span><textarea id="optRemarks" rows="3" placeholder="Например: сделай короче; без содержания; убери раздел «Приложения»"></textarea></label>
-    </details>
+    <section class="card fold" data-fold="how" id="cardHow">
+      <h2 class="fold-h"><span class="fold-name">Как построить план</span><span class="fold-sum" id="sumHow"></span></h2>
+      <div class="fold-b">
+        <div class="stepper-row">
+          <span>Сколько слайдов</span>
+          <div class="stepper" id="slidesStepper">
+            <button type="button" data-d="-1" aria-label="Меньше">−</button>
+            <output id="optSlidesOut">Авто</output>
+            <button type="button" data-d="1" aria-label="Больше">+</button>
+          </div>
+        </div>
+        <div class="fld"><span>Как разбирать документ</span>
+          <div class="seg" id="modeSeg" role="radiogroup">
+            <button type="button" data-v="rules" class="on" role="radio">По правилам</button>
+            <button type="button" data-v="search" role="radio">+ поиск фраз</button>
+            <button type="button" data-v="ai" role="radio">С моделью ИИ</button>
+          </div>
+          <p class="hint hidden" id="searchInfo"></p>
+        </div>
+        <div class="ai-box hidden" id="aiBox">
+          <div class="ai-info" id="aiInfo"></div>
+          <div class="seg small" id="aiLevelSeg">
+            <button type="button" data-v="fast" class="on">Быстро: структура</button>
+            <button type="button" data-v="full">Полностью: и тексты</button>
+          </div>
+          <label class="fld"><span>Акценты для ИИ</span><textarea id="optFocus" rows="2" placeholder="Например: упор на экономический эффект"></textarea></label>
+        </div>
+      </div>
+    </section>
+
+    <section class="card fold" data-fold="extra" data-fold-default="1" id="cardExtra">
+      <h2 class="fold-h"><span class="fold-name">Дополнительно</span><span class="fold-sum" id="sumExtra"></span></h2>
+      <div class="fold-b">
+        <label class="fld"><span>Содержание</span><select id="optAgenda"><option value="auto">Авто</option><option value="yes">Да</option><option value="no">Нет</option></select></label>
+        <label class="fld"><span>Разделители разделов</span><select id="optSections"><option value="auto">Авто</option><option value="yes">Да</option><option value="no">Нет</option></select></label>
+        <label class="fld"><span>Выделенные в документе фрагменты</span><select id="optMarks">
+          <option value="priority">Важнее остального</option><option value="only">Только они</option><option value="ignore">Не учитывать</option></select></label>
+        <label class="fld"><span>План по образцу</span><select id="optExample"><option value="auto">похожая презентация из библиотеки</option><option value="off">не использовать</option></select>
+          <span class="hint" id="exampleHint">Вид и порядок слайдов — как у похожих слайдов ваших прежних презентаций PowerPoint из «📚 Библиотеки материалов».</span></label>
+        <label class="sw"><input type="checkbox" id="optConcl" checked><span>Итоговый слайд «Ключевые тезисы»</span></label>
+        <label class="sw"><input type="checkbox" id="optPics" checked><span>Картинки из библиотеки к подходящим слайдам</span></label>
+        <label class="sw"><input type="checkbox" id="optDataTables"><span>Таблицы с данными к диаграммам</span></label>
+        <label class="sw"><input type="checkbox" id="optAnim" checked><span>Анимации и переходы</span></label>
+        <label class="fld"><span>Замечания ко всей презентации</span><textarea id="optRemarks" rows="3" placeholder="Например: сделай короче; без содержания; убери раздел «Приложения»"></textarea></label>
+      </div>
+    </section>
     <div class="cta-space"></div>
   </section>
 
@@ -129,15 +155,13 @@ try { var d = document.documentElement, th = JSON.parse(localStorage.getItem('zn
       </div>
       <div class="topic-bar hidden" id="topicBar"></div>
       <div class="notes hidden" id="planNotes"></div>
-      <div class="chips-row">
-        <button type="button" class="chip-btn" id="btnCheck">✔ Проверить</button>
-        <button type="button" class="chip-btn" id="btnAddSlide">＋ Слайд</button>
-        <button type="button" class="chip-btn" id="btnBulkPics">🖼 Картинки</button>
-        <button type="button" class="chip-btn" id="btnPlanRemarks">💬 Замечания</button>
-        <button type="button" class="chip-btn" id="btnVersions">👥 Версии</button>
-        <button type="button" class="chip-btn" id="btnOwn">📎 Свои слайды</button>
-        <button type="button" class="chip-btn" id="btnSavePlan">💾 Сохранить план</button>
+      <div class="plan-tools">
+        <button type="button" class="pt-btn" id="btnBulkPics"><i><svg class="ico-pic" viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="4" width="19" height="16" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="16.5" cy="9" r="2" fill="#F2B947"/><path d="M3.6 18.6 L9 12.2 L12.6 16 L15 13.6 L20.4 18.6 Z" fill="#4BAF46"/></svg></i>Картинки</button>
+        <button type="button" class="pt-btn" id="btnCheck"><i aria-hidden="true">✔</i>Проверить</button>
+        <button type="button" class="pt-btn" id="btnAddSlide"><i aria-hidden="true">＋</i>Слайд</button>
+        <button type="button" class="pt-btn" id="btnPlanMore" aria-label="Ещё: замечания, версии, свои слайды, план в файл"><i aria-hidden="true">⋯</i>Ещё</button>
       </div>
+      <p class="hint plan-drag-hint" id="planDragHint">Порядок слайдов — перетащите слайд за <b>⋮⋮</b>. Нажмите на слайд, чтобы изменить его.</p>
       <ol class="slides" id="slideList"></ol>
     </div>
     <div class="cta-space"></div>
@@ -159,6 +183,7 @@ try { var d = document.documentElement, th = JSON.parse(localStorage.getItem('zn
     <div class="menu-group">
       <div class="menu-h">Работа</div>
       <button class="menu-item" type="button" data-m="projects"><i>👤</i><span><b>Личный кабинет</b><small>Мои презентации, профиль, обучение — работа сохраняется сама</small></span></button>
+      <button class="menu-item" type="button" data-m="reset"><i>↺</i><span><b>Начать заново</b><small>Новая презентация с чистого листа; текущая останется в кабинете</small></span></button>
       <button class="menu-item" type="button" data-m="openPlan"><i>📂</i><span><b>Открыть план</b><small>Файл .plan.json — из Windows-версии или с телефона</small></span></button>
       <button class="menu-item" type="button" data-m="report"><i>📝</i><span><b>Справка Word</b><small>Краткое содержание материалов в .docx</small></span></button>
       <button class="menu-item" type="button" data-m="library"><i>📚</i><span><b>Библиотека материалов</b><small>Прежние доклады и презентации: готовые фразы, образцы и эталоны</small></span></button>
@@ -170,7 +195,7 @@ try { var d = document.documentElement, th = JSON.parse(localStorage.getItem('zn
       <div class="menu-h">Настройки</div>
       <button class="menu-item" type="button" data-m="templates"><i>🎨</i><span><b>Шаблоны оформления</b><small id="moreTplSub">Корпоративный или свой .pptx/.potx</small></span></button>
       <button class="menu-item" type="button" data-m="ai"><i>✨</i><span><b>Модель ИИ</b><small id="moreAiSub">Не подключена — план строится по правилам</small></span></button>
-      <button class="menu-item" type="button" data-m="theme"><i>🎨</i><span><b>Вид: тема и размер текста</b><small id="moreThemeSub">Как в телефоне · крупный текст</small></span></button>
+      <button class="menu-item" type="button" data-m="theme"><i>🎨</i><span><b>Вид: тема, текст, значки, миниатюры</b><small id="moreThemeSub">Как в телефоне · крупный текст</small></span></button>
     </div>
     <div class="menu-group">
       <div class="menu-h">О программе</div>
@@ -178,7 +203,7 @@ try { var d = document.documentElement, th = JSON.parse(localStorage.getItem('zn
       <button class="menu-item" type="button" data-m="help"><i>❓</i><span><b>Как это работает</b><small>Коротко о шагах и возможностях</small></span></button>
       <button class="menu-item" type="button" data-m="storage"><i>💽</i><span><b>Память телефона</b><small id="moreStorageSub">Сколько места занимает конструктор</small></span></button>
     </div>
-    <p class="about" id="aboutLine">Конструктор презентаций · версия 1.8 для телефона</p>
+    <p class="about" id="aboutLine">Конструктор презентаций · версия 1.9 для телефона</p>
     <div class="cta-space"></div>
   </section>
 </main>

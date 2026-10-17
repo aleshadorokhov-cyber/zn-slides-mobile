@@ -25,6 +25,18 @@ function toast(msg, isError = false, ms = 4200) {
   setTimeout(kill, ms);
   while ($('#toasts').children.length > 3) $('#toasts').firstChild.remove();
 }
+/* сообщение с кнопкой «Вернуть» (1.9): удалённый слайд можно вернуть */
+function undoToast(msg, undo, ms = 7000) {
+  const el = h('<div class="toast undo"><span></span><button type="button" class="toast-undo">Вернуть</button></div>');
+  el.firstChild.textContent = msg;
+  let done = false;
+  const kill = () => { el.style.transition = 'opacity .25s'; el.style.opacity = '0'; setTimeout(() => el.remove(), 260); };
+  $('.toast-undo', el).addEventListener('click', e => { e.stopPropagation(); if (done) return; done = true; kill(); undo(); });
+  el.addEventListener('click', kill);
+  $('#toasts').appendChild(el);
+  setTimeout(kill, ms);
+  while ($('#toasts').children.length > 3) $('#toasts').firstChild.remove();
+}
 
 /* ---------------------------------------------------------------- «Работаю…» */
 const Busy = {
@@ -158,13 +170,13 @@ window.addEventListener('popstate', () => {
 });
 function closeAllSheets() { while (Sheets.length) Sheets[Sheets.length - 1].close(); }
 
-function confirmSheet(text, okText = 'Да', danger = false) {
+function confirmSheet(text, okText = 'Да', danger = false, hint = '') {
   return new Promise(res => {
     const ok = h(`<button class="btn ${danger ? 'danger' : 'primary'}">${esc(okText)}</button>`);
     const no = h('<button class="btn ghost">Отмена</button>');
     let done = false;
-    const sh = openSheet({title: text, body: '', foot: [no, ok], onClose: () => { if (!done) res(false); }});
-    sh.body.remove();
+    const sh = openSheet({title: text, body: hint ? h(`<p class="hint" style="margin:0">${esc(hint)}</p>`) : '', foot: [no, ok], onClose: () => { if (!done) res(false); }});
+    if (!hint) sh.body.remove();
     ok.onclick = () => { done = true; sh.close(); res(true); };
     no.onclick = () => { done = true; sh.close(); res(false); };
   });

@@ -92,23 +92,26 @@ const Editor = (() => {
     b.appendChild(pv);
     cur.pv = pv;
     showPreview();
-    // инструменты
+    // 1.9: «Вид: Карточки ▾» — варианты под содержание слайда и все виды по группам; дальше крупные кнопки
     const meta = META.includes(s.layout) || s.layout === 'own';
+    if (!meta) {
+      const vb = h(`<button type="button" class="view-btn">${viewLabel(s)}</button>`);
+      vb.addEventListener('click', () => ViewPick.open(cur.s, n => { if (n !== cur.s) replace(n); else draw(); changed(); }));
+      b.appendChild(vb);
+    }
     const tools = h(`<div class="ed-tools">
-      <button class="ed-tool" data-t="lay" ${s.layout === 'own' ? 'disabled style="opacity:.4"' : ''}><i>▦</i>Макет</button>
-      <button class="ed-tool" data-t="pic" ${meta ? 'disabled style="opacity:.4"' : ''}><i>🖼</i>Картинки</button>
-      <button class="ed-tool" data-t="chart" ${meta ? 'disabled style="opacity:.4"' : ''}><i>📊</i>Диаграмма</button>
-      <button class="ed-tool" data-t="more"><i>⋯</i>Ещё</button></div>`);
+      ${meta ? '' : `<button class="ed-tool" data-t="pic"><i>${PIC_ICON}</i>Картинки</button>`}
+      ${s.layout === 'chart' ? '<button class="ed-tool" data-t="chart"><i>📊</i>Данные</button>' : ''}
+      <button class="ed-tool" data-t="dup"><i>⧉</i>Копия</button>
+      <button class="ed-tool danger" data-t="del"><i>🗑</i>Удалить</button></div>`);
     $$('button', tools).forEach(x => x.addEventListener('click', () => {
       const t = x.dataset.t;
-      if (t === 'lay') pickLayout();
       if (t === 'pic') Pictures.openSlide(cur.s, n => replace(n));
       if (t === 'chart') Chart.open(cur.s, n => replace(n));
-      if (t === 'more') moreMenu();
+      if (t === 'dup') duplicate();
+      if (t === 'del') remove();
     }));
     b.appendChild(tools);
-    // варианты
-    if ((s.alts || []).length > 1) b.appendChild(altsEl(s));
     // поля
     b.appendChild(h(`<div class="sec-h">${esc(layoutName(s.layout))}</div>`));
     const d = (state.layouts[s.layout] || {}).desc;
@@ -256,63 +259,21 @@ const Editor = (() => {
     return box;
   }
 
-  /* варианты: другие способы показать этот материал */
-  function altsEl(s) {
-    const box = h(`<div><div class="sec-h">Варианты оформления · ${s.alts.length}</div><div class="alts-row"></div></div>`);
-    const row = $('.alts-row', box), curI = s.alt_index || 0;
-    s.alts.forEach((a, i) => {
-      const c = h(`<button type="button" class="alt-card${i === curI ? ' cur' : ''}"><div class="apic">${thumbSvg(a.layout, a)}</div><b></b><small>${i === curI ? '✓ выбран' : 'выбрать'}</small></button>`);
-      $('b', c).textContent = a.alt_label || layoutName(a.layout);
-      Thumbs.attach($('.apic', c), Object.assign({}, a, {title: s.title || a.title}));
-      c.addEventListener('click', () => { if (i !== curI) { replace(chooseAlt(s, i)); toast(`Вариант «${a.alt_label || layoutName(a.layout)}»`); } });
-      row.appendChild(c);
-    });
-    Thumbs.schedule(100);
-    return box;
+  /* копия слайда — сразу под ним; удалить — с «Вернуть» (1.9: «Выше», «Ниже», «Крупно» убраны — порядок
+     меняется перетаскиванием в плане, крупно — нажатием на картинку слайда) */
+  function duplicate() {
+    const arr = state.spec.slides, k = arr.indexOf(cur.s);
+    const c = clone(cur.s);
+    arr.splice(k + 1, 0, c);
+    cur.s = c;
+    draw(); changed();
+    toast(`Копия слайда ${k + 1} — это слайд ${k + 2}`);
   }
-
-  /* выбор макета */
-  function pickLayout() {
-    const s = cur.s;
-    const body = h('<div><div class="search"><input placeholder="Найти макет: процесс, SWOT, карта…" type="search"></div><div class="lay-grid" style="margin-top:12px"></div></div>');
-    const grid = $('.lay-grid', body);
-    const sh = openSheet({title: 'Макет слайда', full: true, back: true, body});
-    function draw(q) {
-      grid.innerHTML = '';
-      state.layoutList.filter(l => !q || (l.name + ' ' + l.desc).toLowerCase().includes(q)).forEach(l => {
-        const c = h(`<button type="button" class="lay-card${l.id === s.layout ? ' on' : ''}">${thumbSvg(l.id)}<b></b><small></small></button>`);
-        $('b', c).textContent = l.name; $('small', c).textContent = l.desc;
-        c.addEventListener('click', () => {
-          if (l.id !== s.layout) { convert(s, l.id); toast(`Макет: ${l.name}`); }
-          sh.close(); draw0();
-          if (l.kind === 'chart' && !((s.chart || {}).series || []).some(x => (x.values || []).some(v => v !== null && v !== ''))) Chart.open(s, n => replace(n));
-        });
-        grid.appendChild(c);
-      });
-    }
-    $('input', body).addEventListener('input', e => draw(e.target.value.trim().toLowerCase()));
-    draw('');
-  }
-  function draw0() { if (cur) { draw(); changed(); } }
-
-  function moreMenu() {
-    const s = cur.s, arr = state.spec.slides;
-    const body = h('<div class="menu-group" style="margin:0"></div>');
-    const items = [['up', '↑', 'Выше'], ['down', '↓', 'Ниже'], ['dup', '⧉', 'Дублировать'], ['view', '👁', 'Смотреть крупно'], ['del', '🗑', 'Удалить слайд']];
-    const sh = openSheet({title: 'Слайд', body});
-    items.forEach(([a, ic, t]) => {
-      const b = h(`<button class="menu-item" type="button"><i>${ic}</i><span><b>${esc(t)}</b></span></button>`);
-      b.addEventListener('click', async () => {
-        const k = arr.indexOf(s);
-        sh.close();
-        if (a === 'up' && k > 0) { [arr[k - 1], arr[k]] = [arr[k], arr[k - 1]]; draw(); }
-        if (a === 'down' && k < arr.length - 1) { [arr[k + 1], arr[k]] = [arr[k], arr[k + 1]]; draw(); }
-        if (a === 'dup') { const c = clone(s); arr.splice(k + 1, 0, c); cur.s = c; draw(); toast('Копия слайда добавлена'); }
-        if (a === 'view') LB.open(k);
-        if (a === 'del' && await confirmSheet('Удалить этот слайд?', 'Удалить', true)) { arr.splice(k, 1); cur.sh.close(); toast('Слайд удалён'); }
-      });
-      body.appendChild(b);
-    });
+  function remove() {
+    const arr = state.spec.slides, s = cur.s, k = arr.indexOf(s);
+    arr.splice(k, 1);
+    cur.sh.close();
+    Plan.undoDelete(s, k);
   }
 
   /* замечание к слайду: правилами или моделью ИИ */
@@ -384,3 +345,92 @@ function chooseAlt(s, i) {
   a.alt_index = i;
   return a;
 }
+
+/* ---------------------------------------------------------------- 1.9: «Вид слайда» вместо длинного списка макетов */
+/* значок картинок: рамка, горы, солнце — понятнее, чем 🖼 */
+const PIC_ICON = '<svg class="ico-pic" viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="4" width="19" height="16" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="16.5" cy="9" r="2" fill="#F2B947"/><path d="M3.6 18.6 L9 12.2 L12.6 16 L15 13.6 L20.4 18.6 Z" fill="#4BAF46"/></svg>';
+/* подпись кнопки «Вид»: «Вид: Карточки · 3 варианта ▾» */
+function viewLabel(s) {
+  const n = (s.alts || []).length;
+  return `<span class="vb-l">Вид:</span> <b>${esc(layoutName(s.layout))}</b>${n > 1 ? `<span class="vb-n">${n} ${plural(n, 'вариант', 'варианта', 'вариантов')}</span>` : ''}<span class="vb-c" aria-hidden="true">▾</span>`;
+}
+// все виды по понятным группам (как «Другой вид…» в Windows-версии)
+const LAYOUT_GROUPS = [
+  ['Список и текст', ['list', 'cards', 'checklist', 'conclusions', 'text', 'hero', 'pillars', 'layers', 'agenda']],
+  ['Шаги и время', ['process', 'timeline', 'roadmap', 'stairs', 'path', 'gantt', 'cycle']],
+  ['Числа и диаграммы', ['kpi', 'chart', 'table', 'bars', 'gauge', 'bubbles', 'funnel']],
+  ['Сравнение и оценка', ['compare', 'balance', 'shift', 'swot', 'matrix', 'risk', 'venn']],
+  ['Структура и связи', ['hub', 'tree', 'mindmap', 'pyramid', 'target', 'honeycomb', 'puzzle', 'gears', 'petals', 'converge', 'fishbone', 'iceberg', 'value_chain']],
+  ['Картинка и карта', ['image', 'map']],
+  ['Нефтегаз', ['well', 'field']],
+];
+const ViewPick = (() => {
+  /* окно «Вид слайда»: сверху варианты под содержание этого слайда (с картинками), ниже — все виды по группам.
+     onPick(n): n — новый объект слайда (вариант) или тот же слайд с другим видом */
+  function open(s, onPick) {
+    const body = h('<div class="vp"></div>');
+    const k = state.spec.slides.indexOf(s);
+    const sh = openSheet({title: 'Вид слайда', sub: `Слайд ${k + 1}${s.title ? ` «${s.title.length > 40 ? s.title.slice(0, 39) + '…' : s.title}»` : ''}`, full: true, body});
+    const alts = s.alts || [];
+    if (alts.length > 1) {
+      const curI = s.alt_index || 0;
+      body.appendChild(h(`<h4 class="vp-h">Подходят к этому материалу</h4>`));
+      const row = h('<div class="alts-row"></div>');
+      alts.forEach((a, i) => {
+        const c = h(`<button type="button" class="alt-card${i === curI ? ' cur' : ''}"><div class="apic">${thumbSvg(a.layout, a)}</div><b></b><small>${i === curI ? '✓ сейчас' : 'выбрать'}</small></button>`);
+        $('b', c).textContent = a.alt_label || layoutName(a.layout);
+        Thumbs.attach($('.apic', c), Object.assign({}, a, {title: s.title || a.title}));
+        c.addEventListener('click', () => {
+          sh.close();
+          if (i === curI) return;
+          onPick(chooseAlt(s, i));
+          toast(`Вид слайда: «${a.alt_label || layoutName(a.layout)}»`);
+        });
+        row.appendChild(c);
+      });
+      body.appendChild(row);
+      Thumbs.schedule(100);
+    }
+    body.appendChild(h(`<h4 class="vp-h">${alts.length > 1 ? 'Другой вид' : 'Все виды'}</h4>`));
+    body.appendChild(h('<div class="search"><input placeholder="Найти вид: процесс, SWOT, карта…" type="search" aria-label="Найти вид слайда"></div>'));
+    const groupsEl = h('<div class="vp-groups"></div>');
+    body.appendChild(groupsEl);
+    const known = new Set(LAYOUT_GROUPS.flatMap(g => g[1]));
+    const rest = state.layoutList.map(l => l.id).filter(id => !known.has(id) && !['title', 'end', 'section', 'own'].includes(id));
+    const groups = rest.length ? LAYOUT_GROUPS.concat([['Другие', rest]]) : LAYOUT_GROUPS;
+    function draw(q) {
+      groupsEl.innerHTML = '';
+      groups.forEach(([name, ids]) => {
+        const list = ids.map(id => state.layouts[id] ? Object.assign({id}, state.layouts[id]) : null).filter(Boolean)
+          .filter(l => !q || (l.name + ' ' + (l.desc || '')).toLowerCase().includes(q));
+        if (!list.length) return;
+        const sec = h(`<section class="vp-group"><h5></h5><div class="lay-grid"></div></section>`);
+        $('h5', sec).textContent = name;
+        list.forEach(l => {
+          const cur = l.id === s.layout;
+          const c = h(`<button type="button" class="lay-card${cur ? ' on' : ''}"${cur ? ' aria-current="true"' : ''}>${thumbSvg(l.id)}<b></b><small></small></button>`);
+          $('b', c).textContent = l.name;
+          if (cur) $('b', c).appendChild(h('<span class="gal-cur">сейчас</span>'));
+          $('small', c).textContent = l.desc || '';
+          c.addEventListener('click', () => {
+            sh.close();
+            if (l.id === s.layout) return;
+            convert(s, l.id);
+            onPick(s);
+            const noData = l.kind === 'chart' && !((s.chart || {}).series || []).some(x => (x.values || []).some(v => v !== null && v !== ''));
+            if (noData) Chart.open(s, n => onPick(n));       // диаграмме нужны числа
+            else toast(`Вид слайда: «${l.name}». Тексты перенесены — проверьте их.`);
+          });
+          $('.lay-grid', sec).appendChild(c);
+        });
+        groupsEl.appendChild(sec);
+      });
+      if (!groupsEl.children.length) groupsEl.appendChild(h('<p class="hint">Такого вида нет — попробуйте другое слово.</p>'));
+    }
+    $('input', body).addEventListener('input', e => draw(e.target.value.trim().toLowerCase()));
+    draw('');
+    requestAnimationFrame(() => { const c = $('.vp-group .lay-card.on', body); if (c && alts.length < 2) c.scrollIntoView({block: 'center'}); });
+    return sh;
+  }
+  return {open};
+})();

@@ -99,7 +99,7 @@ const Library = (() => {
 
 /* ---------------------------------------------------------------- подходящие фразы у слайда */
 const Phrases = (() => {
-  const cache = new WeakMap();
+  const cache = new WeakMap(), draft = new WeakMap();   // draft — набранный, ещё не отправленный запрос (1.9)
   function slidePart(s) {
     const c = {};
     ['layout', 'title', 'subtitle', 'lead', 'center', 'conclusion', 'items', 'paragraphs', 'left', 'right', 'insights'].forEach(k => { if (s[k] !== undefined) c[k] = s[k]; });
@@ -133,8 +133,8 @@ const Phrases = (() => {
   function el(s, onAdd) {
     const c = cache.get(s);
     const box = h(`<details class="card more phr"${c || (s.found || []).length ? ' open' : ''}><summary>🔎 Подходящие фразы${s.found_n ? ` · добавлено ${s.found_n}` : ''}</summary>
-      <p class="hint" style="margin-top:0">Готовые предложения из материалов доклада и «📚 Библиотеки материалов». Модель поиска только находит их, сама ничего не пишет.</p>
-      <div class="search"><input type="search" placeholder="Свои слова для поиска…" enterkeyhint="search"></div>
+      <p class="hint" style="margin-top:0">Готовые предложения из «📚 Библиотеки материалов» — ваших прежних докладов. Модель поиска только находит их, сама ничего не пишет.</p>
+      <div class="search"><input type="search" placeholder="Найти в библиотеке: свои слова…" enterkeyhint="search" aria-label="Найти фразы в библиотеке"></div>
       <div class="row2" style="margin-top:8px"><button class="btn ghost small" type="button" data-a="find">Найти</button><button class="btn ghost small" type="button" data-a="auto">К слайду</button></div>
       <div class="ph-kw"></div><p class="hint phr-note"></p><div class="phr-list"></div></details>`);
     const inp = $('input', box), note = $('.phr-note', box), list = $('.phr-list', box);
@@ -144,9 +144,14 @@ const Phrases = (() => {
       kb.innerHTML = '<span class="hint">Ключевые слова:</span>' + kws.map(k => `<button type="button" class="kw-tag" data-k="${esc(k)}">${esc(k)}</button>`).join('');
       $$('button', kb).forEach(b => b.addEventListener('click', () => { inp.value = b.dataset.k; run(b.dataset.k); }));
     }
-    function show(items, msg) {
+    function show(items, msg, empty) {
       note.textContent = msg || '';
       list.innerHTML = '';
+      if (empty) {                                    // библиотека пуста — сразу кнопка туда
+        const b = h('<button type="button" class="btn ghost small">📚 Открыть библиотеку материалов</button>');
+        b.addEventListener('click', () => Library.open());
+        list.appendChild(b);
+      }
       const tg = targets(s);
       (items || []).forEach(f => {
         const on = has(s, f.t);
@@ -171,20 +176,23 @@ const Phrases = (() => {
       });
     }
     async function run(q) {
+      draft.set(s, q || '');
       note.textContent = 'Ищу…';
       try {
-        const r = await apiJSON('POST', '/api/phrases', {pool: (state.spec.meta || {}).pool || '', query: q || '', slide: slidePart(s), k: 12});
-        const msg = (r.note ? phoneNote(r.note) + ' ' : '') + (r.items.length ? '' : 'Ничего подходящего не нашлось — попробуйте другие слова или пополните «📚 Библиотеку материалов».');
-        cache.set(s, {q, items: r.items, note: msg.trim()});
-        show(r.items, msg.trim());
+        const r = await apiJSON('POST', '/api/phrases', {query: q || '', slide: slidePart(s), k: 12});
+        const msg = (r.note ? phoneNote(r.note) + ' ' : '') + (r.items.length || r.empty ? '' : 'В библиотеке ничего подходящего не нашлось — попробуйте другие слова или добавьте в «📚 Библиотеку материалов» прежние доклады.');
+        cache.set(s, {q, items: r.items, note: msg.trim(), empty: !!r.empty});
+        show(r.items, msg.trim(), r.empty);
       } catch (e) { note.textContent = e.message; }
     }
     $('[data-a=find]', box).addEventListener('click', () => run(inp.value.trim()));
     $('[data-a=auto]', box).addEventListener('click', () => { inp.value = ''; run(''); });
     inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); run(inp.value.trim()); } });
-    if (c) { inp.value = c.q || ''; show(c.items, c.note); }
-    else if ((s.found || []).length) show(s.found, '');
-    else show([], 'Нажмите «К слайду» — подберу готовые фразы к этому слайду, или напишите свои слова и нажмите «Найти».');
+    inp.addEventListener('input', () => draft.set(s, inp.value));   // слайд перерисуется — набранное не пропадёт
+    if (c) { inp.value = c.q || ''; show(c.items, c.note, c.empty); }
+    else if ((s.found || []).some(f => f.lib)) show(s.found.filter(f => f.lib), '');
+    else show([], 'Нажмите «К слайду» — подберу готовые фразы из библиотеки к этому слайду, или напишите свои слова и нажмите «Найти».');
+    if (draft.has(s)) inp.value = draft.get(s);
     return box;
   }
   // подсказки движка написаны для Windows («окно «⚙ Модель ИИ»») — на телефоне это «Ещё» → «Модель ИИ»

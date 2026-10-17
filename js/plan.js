@@ -18,6 +18,7 @@ const Plan = (() => {
     state.info = data ? data.info : null;
     state.warnings = data ? (data.warnings || []) : [];
     Icons.sync(spec.meta);
+    Materials.syncGrad(spec.meta);                   // градиент в фигурах (1.9)
     Check.reset();
     if (spec.meta.template === undefined) spec.meta.template = Materials.template();
     else if (spec.meta.template !== Materials.template() && state.templates.some(t => t.id === spec.meta.template)) {
@@ -37,6 +38,7 @@ const Plan = (() => {
     $('#planBadge').classList.toggle('hidden', !sp);
     App.updateCta();
     View.render();
+    Materials.sums();
     if (!sp) return;
     $('#planBadge').textContent = sp.slides.length;
     $('#planTitle').textContent = sp.meta.title || 'Презентация';
@@ -52,21 +54,33 @@ const Plan = (() => {
     const w = state.warnings || [];
     notes.classList.toggle('hidden', !w.length);
     notes.innerHTML = w.length ? `<details><summary>Замечания конструктора: ${w.length}</summary><ul>${w.map(x => `<li>${esc(x)}</li>`).join('')}</ul></details>` : '';
-    const ol = $('#slideList');
-    ol.innerHTML = '';
-    sp.slides.forEach((s, i) => ol.appendChild(slideEl(s, i)));
+    // список меняется целиком за раз: без пустого промежутка страница не прыгает наверх (после перетаскивания, удаления)
+    const ol = $('#slideList'), y = scrollY, frag = document.createDocumentFragment();
+    sp.slides.forEach((s, i) => frag.appendChild(slideEl(s, i)));
+    ol.replaceChildren(frag);
+    if (state.tab === 'plan' && Math.abs(scrollY - y) > 2) scrollTo(0, y);
     Thumbs.schedule();
   }
   function plural(n, a, b, c) { const m = n % 100, k = n % 10; return m > 10 && m < 20 ? c : k === 1 ? a : (k > 1 && k < 5 ? b : c); }
 
+  const GRIP = '<svg viewBox="0 0 12 20" aria-hidden="true"><g fill="currentColor"><circle cx="3" cy="4" r="1.7"/><circle cx="9" cy="4" r="1.7"/><circle cx="3" cy="10" r="1.7"/><circle cx="9" cy="10" r="1.7"/><circle cx="3" cy="16" r="1.7"/><circle cx="9" cy="16" r="1.7"/></g></svg>';
   function slideEl(s, i) {
     const li = h(`<li class="slide" role="button" tabindex="0">
+      <button type="button" class="grip" aria-label="Переместить слайд ${i + 1}: перетащите вверх или вниз">${GRIP}</button>
       <div class="pic">${thumbSvg(s.layout, s)}<span class="num">${i + 1}</span></div>
-      <div class="info"><div class="t"></div><div class="lay"><span class="tag"></span></div></div>
+      <div class="info"><div class="t"></div><div class="lay"></div></div>
       <span class="go"><svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg></span></li>`);
     $('.t', li).textContent = slideTitle(s);
-    $('.tag', li).textContent = s.layout === 'own' ? `📎 Свой слайд · ${(s.own || {}).n || ''}` : layoutName(s.layout);
-    if ((s.alts || []).length > 1) $('.lay', li).appendChild(h(`<span class="tag alt">вариантов: ${s.alts.length}</span>`));
+    // 1.9: «Вид: Карточки ▾» — нажатие открывает варианты и все виды; у титула, раздела, финала и своего слайда — просто подпись
+    if (s.layout === 'own' || META.includes(s.layout)) $('.lay', li).appendChild(h(`<span class="tag">${esc(s.layout === 'own' ? `📎 Свой слайд · ${(s.own || {}).n || ''}` : layoutName(s.layout))}</span>`));
+    else {
+      const vb = h(`<button type="button" class="tag view-tag">${viewLabel(s)}</button>`);
+      vb.addEventListener('click', e => {
+        e.stopPropagation();
+        ViewPick.open(s, n => { const arr = state.spec.slides, k = arr.indexOf(s); if (n !== s && k >= 0) arr[k] = n; planChanged(); });
+      });
+      $('.lay', li).appendChild(vb);
+    }
     if ((s.remarks || []).length) $('.lay', li).appendChild(h(`<span class="tag">💬 ${s.remarks.length}</span>`));
     if (s.found_n) $('.lay', li).appendChild(h(`<span class="tag">🔎 +${s.found_n}</span>`));
     if (s.example) $('.lay', li).appendChild(h(`<span class="tag">📐 по образцу</span>`));
@@ -74,7 +88,130 @@ const Plan = (() => {
     const pic = $('.pic', li);
     Thumbs.attach(pic, s);
     li.addEventListener('click', () => Editor.open(s));
+    $('.grip', li).addEventListener('click', e => e.stopPropagation());    // ручка только перетаскивает
     return li;
+  }
+
+  /* 1.9: порядок слайдов — перетаскиванием за ⋮⋮ (палец, мышь, перо); у края экрана список прокручивается сам */
+  const DRAG = {on: false};
+  function bindDrag() {
+    const ol = $('#slideList');
+    ol.addEventListener('pointerdown', e => {
+      const g = e.target.closest('.grip');
+      if (!g || e.button > 0 || !state.spec) return;
+      const li = g.closest('li.slide'), from = [...ol.children].indexOf(li);
+      if (from < 0) return;
+      e.preventDefault();
+      try { g.setPointerCapture(e.pointerId); } catch (err) { /* старый браузер */ }
+      Object.assign(DRAG, {on: true, started: false, li, from, to: from, y0: e.clientY, y: e.clientY, mark: null, raf: 0,
+        maxY: document.scrollingElement.scrollHeight - innerHeight});   // дальше конца плана не прокручивать
+    });
+    ol.addEventListener('pointermove', e => {
+      if (!DRAG.on) return;
+      DRAG.y = e.clientY;
+      if (!DRAG.started) {
+        if (Math.abs(e.clientY - DRAG.y0) < 6) return;
+        DRAG.started = true;
+        DRAG.li.classList.add('dragging');
+        document.body.classList.add('dragging-slide');
+        if (navigator.vibrate) try { navigator.vibrate(8); } catch (err) { /* нет */ }
+        DRAG.raf = requestAnimationFrame(dragScroll);
+      }
+      dragPlace();
+    });
+    const end = e => {
+      if (!DRAG.on) return;
+      const {started, from, to, li} = DRAG;
+      DRAG.on = false;
+      cancelAnimationFrame(DRAG.raf);
+      document.body.classList.remove('dragging-slide');
+      if (li) { li.classList.remove('dragging'); li.style.transform = ''; }
+      dragMark(null, '');
+      if (!started || e.type === 'pointercancel') return;
+      moveSlide(from, to);
+    };
+    ol.addEventListener('pointerup', end);
+    ol.addEventListener('pointercancel', end);
+    ol.addEventListener('keydown', e => {             // с клавиатуры: ↑ ↓ на ручке
+      const g = e.target.closest('.grip');
+      if (!g || !['ArrowUp', 'ArrowDown'].includes(e.key)) return;
+      e.preventDefault();
+      const from = [...ol.children].indexOf(g.closest('li.slide')), to = from + (e.key === 'ArrowUp' ? -1 : 1);
+      if (to < 0 || to >= state.spec.slides.length) return;
+      moveSlide(from, to > from ? to + 1 : to);
+      const li = $('#slideList').children[to];
+      if (li) $('.grip', li).focus();
+    });
+  }
+  function dragMark(el, cls) {                        // куда встанет слайд — линия над слайдом (или под последним)
+    if (DRAG.mark && (DRAG.mark[0] !== el || DRAG.mark[1] !== cls)) DRAG.mark[0].classList.remove(DRAG.mark[1]);
+    DRAG.mark = el ? [el, cls] : null;
+    if (el) el.classList.add(cls);
+  }
+  function dragPlace() {
+    const items = [...$('#slideList').children];
+    DRAG.li.style.transform = `translateY(${DRAG.y - DRAG.y0}px)`;
+    let to = items.length;
+    for (let k = 0; k < items.length; k++) {
+      if (items[k] === DRAG.li) continue;
+      const r = items[k].getBoundingClientRect();
+      if (DRAG.y < r.top + r.height / 2) { to = k; break; }
+    }
+    DRAG.to = to;
+    if (to === DRAG.from || to === DRAG.from + 1) dragMark(null, '');
+    else if (to < items.length) dragMark(items[to], 'drop-before');
+    else dragMark(items[items.length - 1], 'drop-after');
+  }
+  function dragScroll() {
+    if (!DRAG.on) return;
+    const top = $('.appbar').getBoundingClientRect().bottom + 60, bottom = $('#cta').getBoundingClientRect().top - 40;
+    let dy = DRAG.y < top ? -Math.min(22, (top - DRAG.y) / 2 + 4) : (DRAG.y > bottom ? Math.min(22, (DRAG.y - bottom) / 2 + 4) : 0);
+    dy = Math.round(Math.max(-scrollY, Math.min(dy, DRAG.maxY - scrollY)));
+    if (dy) { window.scrollBy(0, dy); DRAG.y0 -= dy; dragPlace(); }
+    DRAG.raf = requestAnimationFrame(dragScroll);
+  }
+  function moveSlide(from, to) {                      // to — «перед каким слайдом» в прежнем порядке
+    const arr = state.spec.slides;
+    if (to === from || to === from + 1) return;
+    const [s] = arr.splice(from, 1);
+    const at = to > from ? to - 1 : to;
+    arr.splice(at, 0, s);
+    planChanged();
+    toast(`Слайд ${from + 1} теперь ${at + 1}-й`);
+    if (!restore('dragged', 0)) { store('dragged', 1); $('#planDragHint').classList.add('hidden'); }   // подсказка больше не нужна
+  }
+  /* удалённый слайд можно вернуть */
+  function undoDelete(s, k) {
+    planChanged();
+    const name = slideTitle(s);
+    undoToast(`Слайд «${name.length > 40 ? name.slice(0, 39) + '…' : name}» удалён`, () => {
+      const arr = state.spec.slides;
+      arr.splice(Math.min(k, arr.length), 0, s);
+      planChanged();
+      toast('Слайд возвращён');
+    });
+  }
+
+  /* «⋯ Ещё» над планом: замечания ко всему плану, версии, свои слайды, план в файл */
+  function planMore() {
+    const body = h('<div class="menu-group" style="margin:0"></div>');
+    const sh = openSheet({title: 'План: ещё', body});
+    [['remarks', '💬', 'Замечания ко всему плану', '«сделай короче», «без содержания»…'],
+     ['versions', '👥', 'Версии для слушателей', 'Короче для руководства, подробнее для экспертов'],
+     ['own', '📎', 'Свои слайды из PowerPoint', 'Вставить готовые слайды из своей презентации'],
+     ['save', '⇩', 'Сохранить план в файл', 'Файл .plan.json — открывается и в Windows-версии'],
+     ['open', '📂', 'Открыть план из файла', 'Файл .plan.json']].forEach(([a, ic, t, sub]) => {
+      const b = h(`<button class="menu-item" type="button"><i>${ic}</i><span><b>${esc(t)}</b><small>${esc(sub)}</small></span></button>`);
+      b.addEventListener('click', () => {
+        sh.close();
+        if (a === 'remarks') planRemarks();
+        if (a === 'versions') Versions.open();
+        if (a === 'own') Own.open();
+        if (a === 'save') savePlan();
+        if (a === 'open') openPlanFile();
+      });
+      body.appendChild(b);
+    });
   }
 
   // значки проверки у слайда: ⚠ N — важные замечания рецензента, 🔢 N — числа, которых нет в материалах
@@ -163,15 +300,14 @@ const Plan = (() => {
 
   function init() {
     $('#btnAddSlide').addEventListener('click', addSlide);
-    $('#btnSavePlan').addEventListener('click', savePlan);
-    $('#btnPlanRemarks').addEventListener('click', planRemarks);
     $('#btnBulkPics').addEventListener('click', () => Pictures.openBulk());
     $('#btnCheck').addEventListener('click', () => Check.open());
-    $('#btnVersions').addEventListener('click', () => Versions.open());
-    $('#btnOwn').addEventListener('click', () => Own.open());
+    if (restore('dragged', 0)) $('#planDragHint').classList.add('hidden');
+    $('#btnPlanMore').addEventListener('click', planMore);
     $('#planInput').addEventListener('change', onPlanFile);
+    bindDrag();
   }
-  return {init, open, render, build, savePlan, openPlanFile, addSlide, badges};
+  return {init, open, render, build, savePlan, openPlanFile, addSlide, badges, undoDelete, planRemarks};
 })();
 
 /* ---------------------------------------------------------------- картинки слайдов (миниатюры) */
@@ -180,7 +316,7 @@ const Thumbs = (() => {
   const waiting = new Map();        // ключ → [элементы .pic]
   let timer = null, running = false;
   const key = s => JSON.stringify([stripAlts(s), state.spec && state.spec.meta.title, state.spec && state.spec.meta.template,
-    state.spec && state.spec.meta.icon_shape, state.spec && state.spec.meta.icon_3d, state.spec && state.spec.slides.indexOf(s)]);
+    state.spec && state.spec.meta.icon_shape, state.spec && state.spec.meta.icon_3d, state.spec && state.spec.meta.gradients, state.spec && state.spec.slides.indexOf(s)]);
   function stripAlts(s) { const c = Object.assign({}, s); ['alts', 'remarks', 'alt_index', 'found', 'found_n', 'example'].forEach(k => delete c[k]); return c; }
   function reset() { cache.clear(); waiting.clear(); }
   const put = (el, v) => SlidesView.put(el, v);
@@ -210,7 +346,8 @@ const Thumbs = (() => {
       batch.forEach(([k]) => waiting.delete(k));
       const slides = batch.map(([, list]) => list[0].s);
       const numbers = slides.map(s => Math.max(1, state.spec.slides.indexOf(s) + 1));
-      const urls = await SlidesView.images(slides, state.spec.meta, {width: 480, numbers});
+      const big = document.documentElement.getAttribute('data-thumb') !== 's' && document.documentElement.getAttribute('data-thumb') !== 'm';
+      const urls = await SlidesView.images(slides, state.spec.meta, {width: big ? 720 : 480, numbers});   // крупные миниатюры — чётче
       batch.forEach(([k, list], i) => {
         if (!urls[i]) { list.forEach(x => x.el.querySelector('.thumb-load')?.remove()); return; }
         remember(k, urls[i]);

@@ -23,6 +23,13 @@ const Materials = (() => {
     $('#iconShapeBox').replaceWith(Object.assign(Icons.shapesEl(), {id: 'iconShapeBox'}));
     seg('#aiLevelSeg', v => { state.aiLevel = v; saveSoon(); });
     $('#optTpl').addEventListener('change', e => { store('tpl', e.target.value); syncTemplate(); });
+    FORM0 = getForm();                    // поля как в новой работе — для «↺ Начать заново» (1.9)
+    $('#optGrad').checked = restore('shapeGrad', true) !== false;
+    $('#optGrad').addEventListener('change', e => selectGrad(e.target.checked));
+    $('#btnSaveNow').addEventListener('click', saveClick);
+    $('#btnReset').addEventListener('click', resetAll);
+    initFolds();
+    ['input', 'change'].forEach(ev => $('#scrMaterials').addEventListener(ev, sumsSoon));
     // запомненные параметры
     const o = restore('opts', {});
     if (o.event) $('#optEvent').value = o.event;
@@ -35,14 +42,15 @@ const Materials = (() => {
     renderStepper();
     renderFiles();
   }
+  let FORM0 = null;
   function seg(sel, on) {
-    $$(sel + ' button').forEach(b => b.addEventListener('click', () => { setSeg(sel, b.dataset.v); on(b.dataset.v); }));
+    $$(sel + ' button').forEach(b => b.addEventListener('click', () => { setSeg(sel, b.dataset.v); on(b.dataset.v); sumsSoon(); }));
   }
   function setSeg(sel, v) { $$(sel + ' button').forEach(b => { b.classList.toggle('on', b.dataset.v === v); b.setAttribute('aria-checked', b.dataset.v === v); }); }
-  function renderStepper() { $('#optSlidesOut').textContent = state.slides ? String(state.slides) : 'Авто'; }
+  function renderStepper() { $('#optSlidesOut').textContent = state.slides ? String(state.slides) : 'Авто'; sumsSoon(); }
 
   /* поля экрана — в работе «Моих презентаций» (1.8): закрыли вкладку — при следующем открытии они на месте */
-  const FORM_SKIP = new Set(['fileInput', 'optTpl']);
+  const FORM_SKIP = new Set(['fileInput', 'optTpl', 'optGrad']);   // шаблон и градиент — оформление, а не поля доклада
   const formEls = () => $$('#scrMaterials input[id], #scrMaterials select[id], #scrMaterials textarea[id]').filter(el => !FORM_SKIP.has(el.id) && el.type !== 'file');
   function getForm() {
     const o = {slides: state.slides, mode: state.mode, ai_level: state.aiLevel};
@@ -61,7 +69,7 @@ const Materials = (() => {
     if (['rules', 'search', 'ai'].includes(o.mode)) state.mode = o.mode;
     if (['fast', 'full'].includes(o.ai_level)) state.aiLevel = o.ai_level;
     setSeg('#modeSeg', state.mode); setSeg('#aiLevelSeg', state.aiLevel);
-    renderStepper(); updateAi();
+    renderStepper(); updateAi(); sums();
   }
   /* новая работа: поля доклада — пустые (мероприятие, шаблон и прочие привычные настройки остаются) */
   function clearForm() {
@@ -123,7 +131,10 @@ const Materials = (() => {
       ul.appendChild(li);
     });
     $('#btnSample').classList.toggle('hidden', state.files.length > 0);
+    $('#drop').classList.toggle('slim', state.files.length > 0);       // файлы есть — поле загрузки в одну строку (1.9)
+    $('.drop-main', $('#drop')).textContent = state.files.length ? 'Добавить ещё файлы' : 'Добавить файлы';
     App.updateCta();
+    sums();
   }
   function fmtSize(n) { return n > 1e6 ? (n / 1e6).toFixed(1).replace('.', ',') + ' МБ' : Math.max(1, Math.round(n / 1e3)) + ' КБ'; }
 
@@ -134,7 +145,7 @@ const Materials = (() => {
       focus: $('#optFocus').value.trim(), agenda: $('#optAgenda').value, sections: $('#optSections').value,
       conclusions: $('#optConcl').checked, data_tables: $('#optDataTables').checked, animations: $('#optAnim').checked,
       marks: $('#optMarks').value, remarks: $('#optRemarks').value.trim(), pictures: $('#optPics').checked,
-      example: $('#optExample').value || 'auto',
+      example: $('#optExample').value || 'auto', gradients: $('#optGrad').checked,
     };
     store('opts', {event: o.event, slides: o.target_slides, mode: o.mode, ai_level: o.ai_level, marks: o.marks, pictures: o.pictures});
     return o;
@@ -217,6 +228,7 @@ const Materials = (() => {
     $('#barSub').textContent = t && !t.builtin ? `Шаблон «${t.name}»` : 'Корпоративный шаблон АО «Зарубежнефть»';
     $('#moreTplSub').textContent = t ? `Сейчас: ${t.name}` : 'Корпоративный или свой .pptx/.potx';
     if (state.spec && (state.spec.meta.template || '') !== id) { state.spec.meta.template = id; planChanged(); }
+    sums();
   }
   function template() { return $('#optTpl').value; }
 
@@ -233,5 +245,90 @@ const Materials = (() => {
       : 'Вид и порядок слайдов — как у похожих слайдов ваших прежних презентаций. Добавьте их в «📚 Библиотеку материалов» (PowerPoint, .pptx).';
   }
 
-  return {init, analyze, report, updateAi, renderTemplates, template, addFiles, renderFiles, options, examples, getForm, setForm, clearForm};
+  /* ---------------------------------------------------------------- 1.9: свёртка карточек, сводки, градиент, сохранить и начать заново */
+  // карточка сворачивается нажатием на заголовок; свёрнутая показывает коротко, что внутри; выбор запоминается
+  const CHEVRON = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 7.5 L10 12.5 L15 7.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  let foldSt = {};
+  function initFolds() {
+    foldSt = restore('fold', {});
+    $$('#scrMaterials .fold').forEach(box => {
+      const hd = $('.fold-h', box), key = box.dataset.fold;
+      hd.setAttribute('role', 'button');
+      hd.tabIndex = 0;
+      hd.appendChild(h(`<span class="fold-btn">${CHEVRON}</span>`));
+      const tog = () => setFold(box, !box.classList.contains('folded'));
+      hd.addEventListener('click', tog);
+      hd.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); tog(); } });
+      setFold(box, key in foldSt ? !!foldSt[key] : box.dataset.foldDefault === '1', true);
+    });
+  }
+  function setFold(box, folded, quiet) {
+    box.classList.toggle('folded', folded);
+    const hd = $('.fold-h', box);
+    hd.setAttribute('aria-expanded', String(!folded));
+    hd.setAttribute('aria-label', (folded ? 'Развернуть: ' : 'Свернуть: ') + $('.fold-name', box).textContent);
+    if (!quiet) { foldSt[box.dataset.fold] = folded; store('fold', foldSt); }
+  }
+  /* развернуть карточку, в которой элемент (обучение, переход к полю) */
+  function unfoldFor(el) { const f = el && el.closest && el.closest('.fold'); if (f && f.classList.contains('folded')) setFold(f, false); }
+  let sumTimer = null;
+  function sumsSoon() { clearTimeout(sumTimer); sumTimer = setTimeout(sums, 200); }
+  function sums() {
+    if (!$('#sumLook')) return;
+    const v = id => ($('#' + id).value || '').trim();
+    const t = state.templates.find(x => (x.builtin ? '' : x.id) === $('#optTpl').value);
+    const shape = (document.querySelector('.ish-btn.on') || {}).getAttribute ? $('.ish-btn.on').getAttribute('aria-label') : '';
+    $('#sumLook').textContent = [t && !t.builtin ? `шаблон «${t.name}»` : 'корпоративный шаблон', (shape || '').toLowerCase(),
+      $('#optGrad').checked ? 'с градиентом' : 'без градиента'].filter(Boolean).join(' · ');
+    $('#sumTitles').textContent = v('optTitle') || 'название — из документа';
+    const mode = {rules: 'по правилам', search: 'правила + поиск фраз', ai: 'с моделью ИИ'}[state.mode] || '';
+    $('#sumHow').textContent = `${state.slides ? state.slides + ' ' + plural(state.slides, 'слайд', 'слайда', 'слайдов') : 'слайдов — по объёму'} · ${mode}`;
+    const now = getForm();
+    const changed = FORM0 ? ['optAgenda', 'optSections', 'optMarks', 'optExample', 'optConcl', 'optPics', 'optDataTables', 'optAnim'].filter(k => now[k] !== FORM0[k]).length : 0;
+    $('#sumExtra').textContent = [changed ? `изменено настроек: ${changed}` : 'как обычно', v('optRemarks') ? 'есть замечания' : ''].filter(Boolean).join(' · ');
+    // текущая работа: вместо приветствия — название и кнопки «Сохранить», «Начать заново»
+    const has = !!(state.spec || state.files.length);
+    $('#hero').classList.toggle('hidden', has);
+    $('#workBar').classList.toggle('hidden', !has);
+    if (has) $('#wbTitle').textContent = workTitle();
+  }
+
+  // градиент в фигурах (1.9): как подложка значков — на всю презентацию; переключение сразу меняет миниатюры плана
+  function selectGrad(on, quiet) {
+    $('#optGrad').checked = !!on;
+    store('shapeGrad', !!on);
+    if (state.spec && state.spec.meta.gradients !== !!on) {
+      state.spec.meta.gradients = !!on;
+      Thumbs.reset();
+      planChanged();
+      if (!quiet) toast(on ? 'Фигуры — с градиентом: картинки слайдов перерисовываются' : 'Фигуры — одним цветом, без градиента: картинки слайдов перерисовываются');
+    }
+    sums();
+  }
+  /* план следует переключателю; план без градиента (из файла или кабинета) переключает его */
+  function syncGrad(meta) {
+    if (typeof meta.gradients === 'boolean') {
+      if (meta.gradients !== $('#optGrad').checked) { $('#optGrad').checked = meta.gradients; store('shapeGrad', meta.gradients); sums(); }
+    } else meta.gradients = $('#optGrad').checked;
+  }
+
+  // «💾 Сохранить» (работа сохраняется и сама) и «↺ Начать заново»
+  async function saveClick() {
+    if (!state.projectId && workEmpty()) { toast('Пока нечего сохранять: добавьте материалы или постройте план.'); return; }
+    state.dirty = true;
+    await saveProject();
+    if ($('#saveState').classList.contains('ok')) toast('Сохранено в «👤 Личном кабинете».');
+  }
+  async function resetAll() {
+    const has = !!(state.spec || state.files.length || !workEmpty());
+    if (has && !await confirmSheet('Начать заново?', 'Начать заново', false, 'Материалы, параметры и план будут сброшены. Текущая презентация останется в «👤 Личном кабинете» — её можно открыть снова. Оформление (шаблон, значки, градиент) не меняется.')) return;
+    await Work.newWork();
+    if (FORM0) setForm(FORM0);
+    store('opts', {});
+    sums();
+    toast('Начинаем заново: добавьте материалы. Прежняя презентация — в «👤 Личном кабинете».', false, 6000);
+  }
+
+  return {init, analyze, report, updateAi, renderTemplates, template, addFiles, renderFiles, options, examples, getForm, setForm, clearForm,
+    sums, sumsSoon, unfoldFor, syncGrad, selectGrad, saveClick, resetAll};
 })();

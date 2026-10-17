@@ -430,7 +430,9 @@ const More = (() => {
         const c = h(`<div class="tpl-card${id === cur ? ' on' : ''}"><h4></h4><small class="hint"></small><div class="tpl-shots"></div><div class="swatches"></div><div class="row2" style="margin-top:10px"></div></div>`);
         $('h4', c).textContent = t.name;
         $('small', c).textContent = t.builtin ? 'Корпоративный шаблон АО «Зарубежнефть»' : `${t.file || ''}${t.aspect ? ' · ' + t.aspect : ''}`;
-        [t.primary, t.accent].filter(Boolean).forEach(x => $('.swatches', c).appendChild(h(`<i style="background:#${esc(x)}"></i>`)));
+        // цвета фигур (1.9: до трёх основных и трёх акцентных) — с названием цвета
+        (t.builtin ? ['00326E', '005491', '0078AE', '0A8F2D', '2FA046', '4BAF46'] : (t.primaries || [t.primary]).concat(t.accents || [t.accent])).filter(Boolean)
+          .forEach(x => $('.swatches', c).appendChild(h(`<i style="background:#${esc(x)}" title="${esc(colorName(x))}"></i>`)));
         const shots = $('.tpl-shots', c);
         for (let i = 0; i < 4; i++) shots.appendChild(h('<div class="s"></div>'));
         tplShots(t, shots);
@@ -439,9 +441,12 @@ const More = (() => {
         use.addEventListener('click', () => { $('#optTpl').value = id; $('#optTpl').dispatchEvent(new Event('change')); draw(); toast(`Шаблон «${t.name}»`); });
         row.appendChild(use);
         if (!t.builtin) {
-          const ed = h('<button class="btn ghost small" type="button">Настроить</button>');
-          ed.addEventListener('click', () => editTpl(t, draw));
+          const ed = h('<button class="btn ghost small" type="button">⚙ Слайды и цвета</button>');
+          ed.addEventListener('click', () => TplSetup.open(t, false, draw));
           row.appendChild(ed);
+          const mo = h('<button class="btn ghost small" type="button" aria-label="Ещё: переименовать, удалить">⋯</button>');
+          mo.addEventListener('click', () => tplMenu(t, draw));
+          row.appendChild(mo);
         }
         (t.warnings || []).slice(0, 2).forEach(w => c.appendChild(h(`<p class="hint">⚠ ${esc(w)}</p>`)));
         body.appendChild(c);
@@ -463,6 +468,8 @@ const More = (() => {
           const t = d.added[d.added.length - 1];
           $('#optTpl').value = t.id; $('#optTpl').dispatchEvent(new Event('change'));
           await draw();
+          Busy.off();
+          TplSetup.open(state.templates.find(x => x.id === t.id) || t, true, draw);   // сразу — отметить слайды шаблона (1.9)
         } else if (!r.ok && !(d.errors || []).length) toast(d.error || 'Шаблон не добавлен', true);
       } catch (err) { toast(err.message, true); } finally { Busy.off(); }
     });
@@ -483,36 +490,26 @@ const More = (() => {
       SHOTS.set(k, views); fill(views);
     } catch (e) { box.classList.add('hidden'); }
   }
-  function editTpl(t, redraw) {
-    const o = {name: t.name, primary: t.primary || '', accent: t.accent || '', roles: Object.assign({}, t.roles || {})};
-    const body = h('<div></div>');
-    body.appendChild(field('Название', o, 'name'));
-    const r = h('<div class="row2"></div>');
-    r.appendChild(field('Основной цвет', o, 'primary', {placeholder: t.auto_primary || '00326E'}));
-    r.appendChild(field('Акцентный цвет', o, 'accent', {placeholder: t.auto_accent || '4BAF46'}));
-    body.appendChild(r);
-    body.appendChild(h('<p class="hint">Цвет — шесть знаков, например 00326E. Пусто — как в шаблоне.</p>'));
-    const lays = (t.layouts || []).map(l => [l.key, l.name]);
-    if (lays.length) {
-      body.appendChild(h('<div class="sec-h">Макеты шаблона для слайдов</div>'));
-      state.templateRoles && Object.entries(state.templateRoles).forEach(([role, name]) => body.appendChild(field(name, o.roles, role, {select: lays})));
-    }
-    const del = h('<button class="btn danger" type="button">Удалить</button>');
-    const ok = h('<button class="btn primary" type="button">Сохранить</button>');
-    const sh = openSheet({title: 'Шаблон', body, foot: [del, ok]});
-    ok.addEventListener('click', async () => {
-      Busy.on('Сохраняю шаблон…');
-      try {
-        await apiJSON('PATCH', `/api/templates/${encodeURIComponent(t.id)}`, {name: o.name, primary: o.primary.replace('#', ''), accent: o.accent.replace('#', ''), roles: o.roles});
-        SHOTS.clear(); sh.close(); redraw(); toast('Шаблон сохранён');
-      } catch (e) { toast(e.message, true); } finally { Busy.off(); }
+  /* ⋯ у своего шаблона: переименовать, удалить */
+  function tplMenu(t, redraw) {
+    const body = h('<div class="menu-group" style="margin:0"></div>');
+    const sh = openSheet({title: `Шаблон «${t.name}»`, body});
+    const ren = h('<button class="menu-item" type="button"><i>✎</i><span><b>Переименовать</b></span></button>');
+    const del = h('<button class="menu-item" type="button"><i>🗑</i><span><b>Удалить шаблон</b><small>Презентации снова соберутся на корпоративном шаблоне</small></span></button>');
+    body.append(ren, del);
+    ren.addEventListener('click', async () => {
+      sh.close();
+      const nm = await promptSheet('Название шаблона', t.name, 'Сохранить');
+      if (!nm || !nm.trim() || nm.trim() === t.name) return;
+      try { await apiJSON('PATCH', `/api/templates/${encodeURIComponent(t.id)}`, {name: nm.trim()}); redraw(); toast('Шаблон переименован'); } catch (e) { toast(e.message, true); }
     });
     del.addEventListener('click', async () => {
+      sh.close();
       if (!await confirmSheet(`Удалить шаблон «${t.name}»?`, 'Удалить', true)) return;
       try {
         await apiJSON('DELETE', `/api/templates/${encodeURIComponent(t.id)}`);
         if (Materials.template() === t.id) { $('#optTpl').value = ''; $('#optTpl').dispatchEvent(new Event('change')); }
-        sh.close(); redraw(); toast('Шаблон удалён');
+        SHOTS.clear(); redraw(); toast('Шаблон удалён');
       } catch (e) { toast(e.message, true); }
     });
   }
@@ -537,18 +534,27 @@ const More = (() => {
   const curTheme = () => { const v = restore('theme', ''); return THEMES.some(t => t[0] === v) ? v : ''; };
   const curFz = () => { const v = restore('fz', 'l'); return SIZES.some(z => z[0] === v) ? v : 'l'; };
   function theme() {
-    const body = h(`<div><div class="sec-h">Размер текста</div><div class="vm-row"></div>
+    const body = h(`<div><div class="sec-h">Размер текста</div><div class="vm-row" id="vmFz"></div>
       <div class="vm-sample"><b>Так выглядит текст</b><p>Презентация из документов в корпоративном шаблоне.</p>
         <p class="hint">Подсказки и подписи — тоже крупно и чётко.</p><p class="lk">Ссылка или кнопка</p></div>
+      <div class="sec-h">Значки и кнопки</div><div class="vm-row" id="vmIc"></div>
+      <div class="sec-h">Картинки слайдов в плане</div><div class="vm-row" id="vmThumb"></div>
+      <p class="hint" style="margin-top:-4px">Крупные — во всю ширину экрана: видно, что на слайде.</p>
       <div class="sec-h">Тема</div><div class="vm-themes"></div></div>`);
+    const row = (sel, list, curV, key, set) => {
+      $(sel, body).innerHTML = list.map(([id, name]) => `<button type="button" data-v="${id}" class="${id === curV ? 'on' : ''}" aria-pressed="${id === curV}">${name}</button>`).join('');
+      $$(sel + ' button', body).forEach(b => b.addEventListener('click', () => { set(b.dataset.v); draw(); }));
+    };
     const draw = () => {
       const th = curTheme(), fz = curFz();
+      row('#vmIc', IC, curIc(), 'ic', setIc);
+      row('#vmThumb', THUMB, curThumb(), 'thumb', setThumb);
       $('.vm-themes', body).innerHTML = THEMES.map(([id, name, c]) => `<button type="button" class="vm-theme${id === th ? ' on' : ''}" data-th="${id}" aria-pressed="${id === th}">
         ${c ? `<span class="vm-sw" style="background:${c[0]}; border: 1px solid ${c[2]}66"><i style="background:${c[1]}; border: 1px solid ${c[2]}88"></i><i style="background:${c[2]}"></i><i style="background: var(--grad-btn)"></i></span>`
           : '<span class="vm-sw vm-auto"><i style="background: var(--grad-btn)"></i></span>'}${esc(name)}</button>`).join('');
-      $('.vm-row', body).innerHTML = SIZES.map(([id, name]) => `<button type="button" data-fz="${id}" class="${id === fz ? 'on' : ''}" aria-pressed="${id === fz}">${name}</button>`).join('');
+      $('#vmFz', body).innerHTML = SIZES.map(([id, name]) => `<button type="button" data-fz="${id}" class="${id === fz ? 'on' : ''}" aria-pressed="${id === fz}">${name}</button>`).join('');
       $$('.vm-theme', body).forEach(b => b.addEventListener('click', () => { setTheme(b.dataset.th); draw(); }));
-      $$('.vm-row button', body).forEach(b => b.addEventListener('click', () => { setFz(b.dataset.fz); draw(); }));
+      $$('#vmFz button', body).forEach(b => b.addEventListener('click', () => { setFz(b.dataset.fz); draw(); }));
     };
     draw();
     const done = h('<button class="btn primary" type="button">Готово</button>');
@@ -573,6 +579,19 @@ const More = (() => {
     document.documentElement.setAttribute('data-fz', v);
     store('fz', v);
     viewSub();
+  }
+  /* 1.9: размер значков и кнопок; картинки слайдов в плане — маленькие, средние, крупные (во всю ширину) */
+  const IC = [['m', 'Обычные'], ['l', 'Крупные'], ['xl', 'Очень крупные']];
+  const THUMB = [['s', 'Маленькие'], ['m', 'Средние'], ['l', 'Крупные']];
+  const curIc = () => { const v = document.documentElement.getAttribute('data-ic'); return IC.some(x => x[0] === v) ? v : 'm'; };
+  const curThumb = () => { const v = document.documentElement.getAttribute('data-thumb'); return THUMB.some(x => x[0] === v) ? v : 'l'; };
+  function setIc(v) { document.documentElement.setAttribute('data-ic', v); store('ic', v); }
+  function setThumb(v) {
+    if (v === curThumb()) return;
+    document.documentElement.setAttribute('data-thumb', v);
+    store('thumb', v);
+    Thumbs.reset();                                   // крупные рисуются чётче — заново
+    if (state.spec) Plan.render();
   }
 
   /* ---------------------------------------------------------------- установка */
@@ -612,22 +631,32 @@ const More = (() => {
       openSheet({title: 'Модель на компьютере', body});
       return;
     }
-    body.innerHTML = `<h4>1. Материалы</h4><p>Добавьте документы: Word, PDF, PowerPoint, Excel, CSV, JSON или текст. Можно сразу несколько. Задайте название, количество слайдов и способ построения: по правилам или с моделью ИИ.</p>
-      <h4>2. План</h4><p>Конструктор предлагает план слайдов в корпоративном шаблоне. Нажмите слайд, чтобы изменить текст, макет (их больше 30), таблицу, диаграмму или картинки. Есть «Варианты оформления» и «Замечание к слайду» — например, «сделай короче» или «покажи таблицей».</p>
+    body.innerHTML = `<h4>Новое в версии 1.9</h4><ul>
+        <li><b>Слайд заполняется целиком</b>: блоки, картинки и таблицы растягиваются на всю площадь, пустых мест почти нет.</li>
+        <li><b>«Вид» слайда</b> — одна кнопка вместо длинного списка макетов: сверху готовые варианты для этого слайда, ниже все виды по группам и поиск.</li>
+        <li><b>Порядок слайдов</b> — прижмите ⋮⋮ слева у слайда и тяните вверх или вниз.</li>
+        <li><b>«💾 Сохранить» и «↺ Начать заново»</b> на экране «Материалы»: начать новую презентацию с чистого листа, прежняя остаётся в «👤 Личном кабинете».</li>
+        <li><b>Карточки сворачиваются</b> — нажмите на заголовок карточки; в свёрнутой видно, что в ней выбрано.</li>
+        <li><b>Градиент в фигурах</b> включается и выключается в карточке «Оформление».</li>
+        <li><b>Свой шаблон</b>: после загрузки пролистайте его слайды и отметьте титульный, обычный, раздел и финал, выберите до трёх основных и акцентных цветов («Ещё» → «Шаблоны» → «⚙ Слайды и цвета»).</li>
+        <li><b>«🔎 Подходящие фразы»</b> ищутся только в «📚 Библиотеке материалов»: материалы доклада и так уже разобраны на слайды.</li>
+        <li><b>Размеры</b>: «Ещё» → «Вид» — размер значков и кнопок и размер картинок слайдов в плане.</li></ul>
+      <h4>1. Материалы</h4><p>Добавьте документы: Word, PDF, PowerPoint, Excel, CSV, JSON или текст. Можно сразу несколько. Задайте название, количество слайдов и способ построения: по правилам или с моделью ИИ.</p>
+      <h4>2. План</h4><p>Конструктор предлагает план слайдов в корпоративном шаблоне. «Вид» у слайда меняет, как показан материал: блоки, таблица, диаграмма, сравнение и другие. Нажмите слайд, чтобы изменить текст, таблицу, диаграмму или картинки, или напишите «Замечание к слайду» — например, «сделай короче» или «покажи таблицей». Порядок — перетаскиванием за ⋮⋮, удалённый слайд можно «Вернуть».</p>
       <h4>3. Просмотр и готовая презентация</h4><p>Слайды можно пролистать на весь экран. Кнопка «Скачать .pptx» собирает презентацию и предлагает отправить её — в PowerPoint, «Файлы», почту или мессенджер.</p>
       <h4>Фото библиотеки</h4><p>«Ещё» → «Библиотека картинок» → «📷 Фото» или «Картинки» у слайда: 158 фото нефтегаза, энергетики, стройки и экологии с Викисклада под открытыми лицензиями. Подходящие к слайду отмечены «★». Автор фото сам подписывается в заметках слайда, так требует лицензия. Фото скачивается при первом выборе и потом доступно без интернета. Эффект к фото — рамка, тень, круг, отражение, чёрно-белое и другие — выбирается в «Картинках» у слайда; без выбора его подбирает сборка.</p>
       <h4>Свои фото</h4><p>«Ещё» → «Библиотека картинок» или «Картинки» у слайда: «🖼 Свои фото» берёт снимки из галереи, «📷 Снять фото» — с камеры. Фото хранятся в телефоне, находятся поиском и ставятся на слайды так же, как картинки конструктора. Нажмите своё фото, чтобы дать ему название и автора и включить «В библиотеке фото» — тогда оно само подбирается к подходящим слайдам.</p>
       <h4>Что умеет телефон</h4><p>Тот же движок, что и в Windows-версии: анализ документов, планы, макеты, диаграммы, картинки, свои шаблоны, справка Word. Всё считается в самом телефоне — документы никуда не отправляются, если не выбрана облачная модель ИИ.</p>
-      <h4>Проверка, словарь, версии</h4><p>«✔ Проверить» на экране «План»: замечания рецензента с исправлением одной кнопкой, сверка чисел с материалами, текст по словарю Компании, проверка готового файла и сравнение с эталонами. «👥 Версии» собирает из плана версии для правления, рабочую и внешнюю. «📎 Свои слайды» вставляет слайды из своего файла PowerPoint как есть.</p>
-      <h4>Библиотека материалов</h4><p>«Ещё» → «Библиотека материалов»: прежние доклады и презентации. Из них берутся готовые фразы («🔎 Подходящие фразы» у слайда, режим «+ поиск фраз»), образцы для «Плана по образцу» и эталоны для проверки.</p>
+      <h4>Проверка, словарь, версии</h4><p>«✔ Проверить» на экране «План»: замечания рецензента с исправлением одной кнопкой, сверка чисел с материалами, текст по словарю Компании, проверка готового файла и сравнение с эталонами. В «⋯ Ещё» на экране «План»: «👥 Версии» собирает из плана версии для правления, рабочую и внешнюю, «📎 Свои слайды» вставляет слайды из своего файла PowerPoint как есть.</p>
+      <h4>Библиотека материалов</h4><p>«Ещё» → «Библиотека материалов»: прежние доклады и презентации. Из них берутся готовые фразы («🔎 Подходящие фразы» у слайда — только отсюда, режим «+ поиск фраз»), образцы для «Плана по образцу» и эталоны для проверки.</p>
       <h4>Только в Windows-версии</h4><p>Автопилот (папка «Входящие»), поиск и установка моделей ИИ на компьютере, 3D-модели, проверка готового файла по картинкам слайдов, фирменный шрифт интерфейса (на телефоне — системный шрифт, он сделан для экрана). Подробности — в инструкции к мобильной версии.</p>
       <h4>Фраза в документе</h4><p>У найденной фразы («🔎 Подходящие фразы» в редакторе слайда) нажмите на её текст или на «📄 В документе»: откроется документ, из которого она взята, с заголовками, списками и таблицами. Сама фраза выделена жёлтым, другие найденные из того же документа — голубым, ▲ ▼ переходят между ними. У Word и PDF кнопка внизу даёт копию самого файла с теми же выделениями: её можно открыть в Word, «Файлах» или переслать. То же есть у чисел во вкладке «🔢 Числа» окна «✔ Проверить». Материалы доклада хранятся для этого 7 дней, фразы из «📚 Библиотеки материалов» открываются всегда.</p>
-      <h4>Вид</h4><p>Кнопка 🎨 вверху или «Ещё» → «Вид»: семь тем (светлая, тёмная, фирменная синяя, графит, тёплая и две контрастные) или «Как в телефоне», и размер текста — обычный, крупный или очень крупный. В каждом окне справа вверху есть крестик ✕, он закрывает окно.</p>
+      <h4>Вид</h4><p>Кнопка 🎨 вверху или «Ещё» → «Вид»: семь тем (светлая, тёмная, фирменная синяя, графит, тёплая и две контрастные) или «Как в телефоне», размер текста — обычный, крупный или очень крупный, размер значков и кнопок и размер картинок слайдов в плане. В каждом окне справа вверху есть крестик ✕, он закрывает окно.</p>
       <h4>Личный кабинет</h4><p>Кнопка 👤 вверху или «Ещё» → «Личный кабинет»: «Мои презентации» (открыть, переименовать, копия, сохранить файлом, удалить, «＋ Новая презентация»), профиль — ФИО и телефон для справки Word, вид и обучение. Кабинет хранится в этом телефоне: у каждого телефона свой, поэтому вход по имени и паролю на телефоне не нужен (в Windows-версии он есть).</p>
       <h4>Автосохранение</h4><p>План, материалы и поля экрана «Материалы» сохраняются сами — через секунду после правки, при переходе в другое приложение и при закрытии вкладки. Вверху видно «✓ Сохранено» и время. Открыли конструктор снова — работа на месте. План по другим материалам — новая презентация в кабинете, прежняя остаётся.</p>
       <h4>Ключевые слова</h4><p>«🏷 Ключевые слова» на экране «Материалы» или в «Ещё»: база слов по 16 темам (геологоразведка, бурение, добыча, шельф, переработка, энергоэффективность, экология, безопасность, цифровизация, финансы и др.). По ней над планом показывается тема доклада и ключевые слова материалов, а в «🔎 Подходящих фразах» — слова для поиска одним нажатием. Модель ИИ пополняет базу сама после построения плана (только локальная модель, когда телефон свободен) или по кнопке «🤖 Пополнить из материалов»; без модели — «Предложить без ИИ». Слова можно добавлять, переносить между темами и удалять, базу — выгрузить и загрузить файлом CSV.</p>
       <h4>Обучение</h4><p>При первом открытии на главном экране показываются шаги: материалы, параметры, построение плана, план, просмотр и скачивание, кабинет. Пройти снова — кнопка ниже или в личном кабинете.</p>
-      <h4>Перенос на компьютер</h4><p>«Сохранить план» даёт файл .plan.json — его открывает и Windows-версия, и наоборот.</p>`;
+      <h4>Перенос на компьютер</h4><p>«⋯ Ещё» → «Сохранить план в файл» на экране «План» даёт файл .plan.json — его открывает и Windows-версия, и наоборот.</p>`;
     const tour = h('<button class="btn ghost" type="button">🎓 Показать обучение</button>');
     tour.addEventListener('click', () => { closeAllSheets(); Tour.start(); });
     openSheet({title: 'Как это работает', body, foot: tour});
@@ -668,6 +697,7 @@ const More = (() => {
       if (m === 'dict') Dict.open();
       if (m === 'keywords') KW.open();
       if (m === 'theme') theme();
+      if (m === 'reset') Materials.resetAll();
       if (m === 'install') install();
       if (m === 'help') help();
       if (m === 'storage') storage();
@@ -677,5 +707,174 @@ const More = (() => {
     matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', () => setTheme(curTheme()));
   }
   function refresh() { $('#moreAiSub').textContent = aiSub(); }
-  return {init, openAi, refresh, projects, theme, help, install, standalone, isIOS};
+  return {init, openAi, refresh, projects, theme, help, install, standalone, isIOS, templates, clearShots: () => SHOTS.clear()};
+})();
+
+/* ---------------------------------------------------------------- 1.9: настройка своего шаблона
+   Какой слайд шаблона — титульный, обычный, раздел, финальный (листать слайды загруженного файла и отмечать);
+   до трёх основных и трёх акцентных цветов фигур. Слайды шаблона рисует сам телефон (в Windows — LibreOffice). */
+/* название цвета по-русски — подпись называет выбранный цвет, а не цвет корпоративной палитры */
+function colorName(hex) {
+  hex = String(hex || '').replace('#', '');
+  if (!/^[0-9a-f]{6}$/i.test(hex)) return '';
+  const [r, g, b] = [0, 2, 4].map(i => parseInt(hex.substr(i, 2), 16) / 255);
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2, d = mx - mn;
+  const s = d ? d / (1 - Math.abs(2 * l - 1)) : 0;
+  const hh = !d ? 0 : ((mx === r ? ((g - b) / d) % 6 : (mx === g ? (b - r) / d + 2 : (r - g) / d + 4)) * 60 + 360) % 360;
+  if (l < 0.1) return 'чёрный';
+  if (l > 0.93 && s < 0.35) return 'белый';
+  if (s < 0.14) return l < 0.32 ? 'тёмно-серый' : (l > 0.7 ? 'светло-серый' : 'серый');
+  let n;
+  if (hh < 12 || hh >= 345) n = 'красный';
+  else if (hh < 40) n = l < 0.33 ? 'коричневый' : 'оранжевый';
+  else if (hh < 66) n = l < 0.33 ? 'оливковый' : 'жёлтый';
+  else if (hh < 160) n = 'зелёный';
+  else if (hh < 188) n = 'бирюзовый';
+  else if (hh < 255) n = hh < 212 && l > 0.45 ? 'голубой' : 'синий';
+  else if (hh < 290) n = 'фиолетовый';
+  else n = l > 0.6 ? 'розовый' : 'малиновый';
+  if (['коричневый', 'оливковый'].includes(n)) return n;
+  return l < 0.28 ? 'тёмно-' + n : (l > 0.72 ? 'светло-' + n : n);
+}
+
+const TplSetup = (() => {
+  const ROLES = [['title', 'Титульный'], ['content', 'Обычный слайд'], ['section', 'Раздел'], ['end', 'Финальный']];
+  const TS = {t: null, data: null, roles: {}, active: 'title', ps: [], acs: [], focus: ['ps', 0], fresh: false, deck: null, body: null, sh: null};
+
+  async function open(t, fresh, redraw) {
+    if (!t || t.builtin) return;
+    Object.assign(TS, {t, data: null, roles: {}, active: 'title', ps: (t.primaries || [t.primary]).filter(Boolean).slice(0, 3),
+      acs: (t.accents || [t.accent]).filter(Boolean).slice(0, 3), focus: ['ps', 0], fresh: !!fresh, deck: null});
+    if (!TS.ps.length) TS.ps = ['0078AE'];
+    if (!TS.acs.length) TS.acs = ['4BAF46'];
+    const body = h('<div class="ts"><p class="hint">Читаю слайды шаблона…</p></div>');
+    const save = h('<button class="btn primary" type="button">Сохранить настройки</button>');
+    const sh = openSheet({title: 'Настройка шаблона', sub: `«${t.name}»`, full: true, body, foot: save});
+    Object.assign(TS, {body, sh});
+    save.addEventListener('click', () => saveAll(redraw));
+    try {
+      TS.data = await apiJSON('GET', `/api/templates/${encodeURIComponent(t.id)}/slides`);
+    } catch (e) { toast(e.message, true); sh.close(); return; }
+    ROLES.forEach(([r]) => { TS.roles[r] = r in (TS.data.suggest || {}) ? TS.data.suggest[r] : null; });
+    render();
+    if (SlidesView.available()) {                       // картинки слайдов — когда шаблон разобран
+      try {
+        const r = await Engine.get(`/api/m/template_file_deck/${encodeURIComponent(t.id)}`);
+        if (!r.ok) throw new Error(r.json().error);
+        TS.deck = await SlidesView.deck(r.body);
+        if (TS.sh === sh) pics();
+      } catch (e) { console.warn('template slides', e); }
+    }
+  }
+  const roleName = r => (ROLES.find(x => x[0] === r) || [0, ''])[1];
+  function pic(n) {                                    // место под картинку слайда; без картинки — название
+    const sl = (TS.data.slides || [])[n];
+    if (!sl) return '<span class="ts-pic none">не выбран</span>';
+    return `<span class="ts-pic" data-pic="${n}"><span class="ts-txt"><b>${esc(sl.title || sl.layout_name)}</b><small>${esc(sl.layout_name)}</small></span></span>`;
+  }
+  function pics() {
+    if (!TS.deck) return;
+    const ar = TS.deck.width && TS.deck.height ? `${TS.deck.width} / ${TS.deck.height}` : '';   // шаблон 4:3 — и рамка 4:3
+    $$('[data-pic]', TS.body).forEach(el => { const v = TS.deck.view(+el.dataset.pic); if (v) { if (ar) el.style.aspectRatio = ar; SlidesView.put(el, v); } });
+  }
+  function render() {
+    const d = TS.data, b = TS.body, gen = d.generated;
+    const marks = n => ROLES.filter(([r]) => TS.roles[r] === n).map(([r]) => `<span class="ts-mark">${roleName(r)}</span>`).join('');
+    b.innerHTML = `
+      ${TS.fresh ? '<p class="ts-hint">Шаблон загружен. Отметьте, какие его слайды — титульный, обычный, раздел и финальный: по ним конструктор будет собирать новые презентации.</p>' : ''}
+      <h4 class="vp-h">1. Слайды шаблона для новой презентации</h4>
+      <p class="hint" style="margin-top:0">Выберите роль, затем нажмите на слайд шаблона ниже. С выбранного слайда берутся макет, фон и оформление.</p>
+      <div class="ts-roles" role="radiogroup" aria-label="Роль слайда">${ROLES.map(([r, name]) => `
+        <button type="button" class="ts-role${TS.active === r ? ' on' : ''}" data-role="${r}" role="radio" aria-checked="${TS.active === r}">
+          ${pic(TS.roles[r])}<b>${name}</b><small>${TS.roles[r] === null || TS.roles[r] === undefined ? 'нажмите на слайд ниже' : (gen ? 'макет ' : 'слайд ') + (TS.roles[r] + 1)}</small></button>`).join('')}
+      </div>
+      <p class="ts-active">Сейчас выбираете: <b>${roleName(TS.active)}</b>${gen ? ' · в шаблоне нет слайдов — показаны его макеты' : ''}</p>
+      <div class="ts-grid">${d.slides.map(sl => `
+        <button type="button" class="ts-tile${TS.roles[TS.active] === sl.n ? ' on' : ''}${marks(sl.n) ? ' used' : ''}" data-n="${sl.n}">
+          ${pic(sl.n)}<span class="ts-marks">${marks(sl.n)}</span>
+          <span class="ts-cap"><b>${sl.n + 1}</b> ${esc(sl.title || sl.layout_name)}${sl.hidden ? ' · скрыт' : ''}</span></button>`).join('')}
+      </div>
+      <h4 class="vp-h">2. Цвета фигур</h4>
+      <p class="hint" style="margin-top:0">Плашки, карточки, стрелки и диаграммы окрашиваются по очереди: сначала основные цвета, затем акцентные.</p>
+      ${[['ps', 'Основные'], ['acs', 'Акцентные']].map(([k, label]) => `
+        <div class="ts-row"><span class="ts-rl">${label}</span>
+          ${TS[k].map((v, i) => `<span class="ts-col${TS.focus[0] === k && TS.focus[1] === i ? ' focus' : ''}" style="background:#${esc(v)}"><input type="color" value="#${esc(v)}" data-k="${k}" data-i="${i}" aria-label="${label} цвет ${i + 1}: ${esc(colorName(v))}">${i ? `<button type="button" class="ts-x" data-k="${k}" data-i="${i}" aria-label="Убрать цвет">×</button>` : ''}</span>`).join('')}
+          ${TS[k].length < 3 ? `<button type="button" class="btn ghost small ts-add" data-k="${k}">＋ цвет</button>` : ''}</div>`).join('')}
+      ${themeColors().length ? `<p class="hint">Цвета темы шаблона — нажмите, чтобы поставить в выбранную ячейку:</p>
+        <div class="ts-theme">${themeColors().map(v => `<button type="button" class="ts-sw" data-v="${v}" style="background:#${v}" aria-label="${esc(colorName(v))} #${v}"></button>`).join('')}</div>` : ''}
+      <div class="ts-sample"><span class="hint">Фигуры по порядку:</span>${order().map((v, i) => `<span class="ts-chip" style="background:#${v}">${i + 1}</span>`).join('')}</div>
+      <p class="ts-caption">${esc(caption())}</p>
+      <button type="button" class="link-btn" data-ts="autocol">Цвета как в шаблоне</button>`;
+    $$('button', b).forEach(el => el.addEventListener('click', () => click(el)));
+    $$('input[type=color]', b).forEach(el => {
+      el.addEventListener('focus', () => { TS.focus = [el.dataset.k, +el.dataset.i]; });
+      el.addEventListener('input', () => colorIn(el, false));
+      el.addEventListener('change', () => colorIn(el, true));
+    });
+    pics();
+  }
+  function themeColors() {
+    const c = TS.t.colors || {}, seen = new Set();
+    return ['accent1', 'accent2', 'accent3', 'accent4', 'accent5', 'accent6', 'dk2', 'lt2'].map(k => (c[k] || '').toUpperCase())
+      .filter(v => /^[0-9A-F]{6}$/.test(v) && !seen.has(v) && seen.add(v));
+  }
+  function order() {                                   // 6 мест корпоративной палитры: 3 синих → основные, 3 зелёных → акцентные
+    const pick = (a, i) => a[Math.min(i, a.length - 1)];
+    return [0, 1, 2].map(i => pick(TS.ps, i)).concat([0, 1, 2].map(i => pick(TS.acs, i)));
+  }
+  function caption() {
+    const nm = a => a.map(colorName).filter((x, i, arr) => arr.indexOf(x) === i);
+    const p = nm(TS.ps), a = nm(TS.acs);
+    return `Основной цвет фигур — ${p[0]}${p.length > 1 ? ', затем ' + p.slice(1).join(' и ') : ''}; акцентный — ${a[0]}${a.length > 1 ? ', затем ' + a.slice(1).join(' и ') : ''}. `
+      + 'Светлый цвет под белым текстом немного затемняется, чтобы текст читался.';
+  }
+  function colorIn(el, done) {
+    const k = el.dataset.k, i = +el.dataset.i;
+    TS[k][i] = el.value.slice(1).toUpperCase();
+    TS.focus = [k, i];
+    el.parentElement.style.background = el.value;      // ячейка — сам цвет (у поля выбора цвета своей заливки нет)
+    if (done) { render(); return; }
+    $$('.ts-chip', TS.body).forEach((c, j) => { c.style.background = '#' + order()[j]; });
+    $('.ts-caption', TS.body).textContent = caption();
+  }
+  function click(el) {
+    const t = TS.t;
+    if (el.dataset.role) { TS.active = el.dataset.role; render(); return; }
+    if (el.dataset.n !== undefined) {
+      TS.roles[TS.active] = +el.dataset.n;
+      const k = ROLES.findIndex(([r]) => r === TS.active);
+      if (k < ROLES.length - 1) TS.active = ROLES[k + 1][0];            // дальше — следующая роль
+      render();
+      $('.ts-roles', TS.body).scrollIntoView({block: 'nearest', behavior: 'smooth'});
+      return;
+    }
+    if (el.classList.contains('ts-add')) {
+      const k = el.dataset.k, theme = themeColors().filter(v => !TS.ps.includes(v) && !TS.acs.includes(v));
+      TS[k].push(theme[0] || TS[k][TS[k].length - 1]);
+      TS.focus = [k, TS[k].length - 1];
+      render(); return;
+    }
+    if (el.classList.contains('ts-x')) { TS[el.dataset.k].splice(+el.dataset.i, 1); TS.focus = [el.dataset.k, 0]; render(); return; }
+    if (el.classList.contains('ts-sw')) { const [k, i] = TS.focus; TS[k][Math.min(i, TS[k].length - 1)] = el.dataset.v; render(); return; }
+    if (el.dataset.ts === 'autocol') {
+      TS.ps = (t.auto_primaries || [t.auto_primary || t.primary]).slice(0, 3);
+      TS.acs = (t.auto_accents || [t.auto_accent || t.accent]).slice(0, 3);
+      render();
+    }
+  }
+  async function saveAll(redraw) {
+    const t = TS.t, same = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
+    const body = {role_slides: Object.assign({}, TS.roles),
+      primaries: same(TS.ps, t.auto_primaries || []) ? [] : TS.ps, accents: same(TS.acs, t.auto_accents || []) ? [] : TS.acs};
+    Busy.on('Сохраняю шаблон…');
+    try {
+      await apiJSON('PATCH', `/api/templates/${encodeURIComponent(t.id)}`, body);
+      More.clearShots();
+      if (state.spec && Materials.template() === t.id) { Thumbs.reset(); Plan.render(); }   // новые настройки — новые картинки слайдов
+      TS.sh.close(); TS.sh = null;
+      if (redraw) await redraw();
+      toast(`Шаблон «${t.name}» настроен: слайды для ролей и цвета фигур сохранены`);
+    } catch (e) { toast(e.message, true); } finally { Busy.off(); }
+  }
+  return {open};
 })();

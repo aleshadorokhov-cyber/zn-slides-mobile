@@ -467,7 +467,7 @@ const KW = (() => {
     if (!state.spec || (!tops.length && !kws.length && !run)) { box.classList.add('hidden'); box.innerHTML = ''; return; }
     box.classList.remove('hidden');
     box.innerHTML = `<div class="tb-head"><span class="tb-l">${tops.length ? 'Тема доклада' : 'Ключевые слова материалов'}</span><button type="button" class="tb-btn">🏷 База слов</button></div>`
-      + (tops.length || kws.length ? `<div class="tb-scroll">${tops.map((t, i) => `<span class="tb-topic${i ? ' minor' : ''}">${esc(t.name)}</span>`).join('')}${kws.slice(0, 10).map(k => `<span class="tb-kw">${esc(k)}</span>`).join('')}</div>` : '')
+      + (tops.length || kws.length ? `<div class="tb-scroll">${tops.slice(0, 2).map((t, i) => `<span class="tb-topic${i ? ' minor' : ''}">${esc(t.name)}</span>`).join('')}${kws.slice(0, 6).map(k => `<span class="tb-kw">${esc(k)}</span>`).join('')}</div>` : '')
       + (run ? `<div class="tb-run">${st.running ? 'Модель ИИ пополняет базу ключевых слов…' : 'Модель ИИ пополнит базу ключевых слов, когда телефон освободится.'}</div>` : '');
     $('.tb-btn', box).addEventListener('click', open);
   }
@@ -490,23 +490,30 @@ const Tour = (() => {
   const STEPS = [
     {title: 'Добро пожаловать!', text: 'За минуту покажу, как сделать презентацию прямо на телефоне. Работа сохраняется сама — в личном кабинете этого телефона.'},
     {el: '#drop', title: 'Шаг 1. Материалы', text: 'Нажмите и выберите документы Word, PDF, Excel или PowerPoint — из «Файлов», почты или облака. Можно несколько сразу.'},
-    {el: () => ($('#modeSeg') || {}).closest ? $('#modeSeg').closest('.card') : null, title: 'Шаг 2. Параметры', text: 'Название, мероприятие, число слайдов и шаблон — по желанию. Здесь же выбирается, как строить план: по правилам (быстро и без сети) или с моделью ИИ.'},
+    {el: '#cardHow', title: 'Шаг 2. Параметры', text: 'Оформление, титульный слайд и число слайдов — по желанию. Здесь выбирается, как строить план: по правилам (быстро и без сети) или с моделью ИИ. Любую карточку можно свернуть — нажмите на её заголовок.'},
     {el: () => (state.files.length ? $('#ctaBtn') : $('#btnSample')), title: 'Шаг 3. Построить план', text: 'Когда файлы добавлены, внизу экрана появится большая кнопка «Построить план». Нет документа под рукой — попробуйте на встроенном примере.'},
-    {el: '#tabbar [data-tab=plan]', title: 'Шаг 4. План', text: 'Здесь появятся слайды. Нажмите на слайд — поменяйте вид, тексты и картинки или напишите замечание: «сделай короче». Над планом — тема доклада и ключевые слова.'},
+    {el: '#tabbar [data-tab=plan]', title: 'Шаг 4. План', text: 'Здесь появятся слайды. «Вид» у слайда — как показать материал; нажмите на слайд — тексты, картинки и замечание: «сделай короче». Порядок — перетащите слайд за ⋮⋮.'},
     {el: '#tabbar [data-tab=view]', title: 'Шаг 5. Просмотр и скачивание', text: 'Слайды — как в PowerPoint. Кнопка «Скачать .pptx» внизу отдаёт готовый файл: в PowerPoint, «Файлы», почту или мессенджер. «✔ Проверить» на экране плана найдёт ошибки и сверит числа с документом.'},
-    {el: '#barMe', title: 'Личный кабинет', text: 'Ваши презентации и профиль. Закрыли вкладку — при следующем открытии продолжите с того же места.'},
+    {el: '#barMe', title: 'Личный кабинет', text: 'Ваши презентации и профиль. Работа сохраняется сама; на экране «Материалы» есть «💾 Сохранить» и «↺ Начать заново».'},
     {el: '#tabbar [data-tab=more]', title: 'Ещё', text: 'Библиотеки материалов и картинок, «🏷 Ключевые слова», модель ИИ, вид и справка. Обучение можно пройти снова — в личном кабинете или в «Как это работает».'},
   ];
   let i = 0, on = false, root = null;
 
   function maybe(hadWork) {
-    if (restore('toured', 0) || (Me.user && Me.user.onboarded)) return;
-    if (hadWork) {                                  // работал с конструктором до версии 1.8 — он не новичок
+    if (restore('toured', 0) || (Me.user && Me.user.onboarded)) { news19(); return; }
+    if (hadWork) {                                  // работал с конструктором раньше — он не новичок
       done(true);
-      toast('Новое в версии 1.8: 👤 личный кабинет — работа сохраняется сама, 🏷 база ключевых слов и обучение (👤 → «Показать обучение снова»).', false, 9000);
+      news19();
       return;
     }
+    store('seen19', 1);
     start();
+  }
+  /* один раз после обновления: что нового в 1.9 */
+  function news19() {
+    if (restore('seen19', 0)) return;
+    store('seen19', 1);
+    toast('Новое в версии 1.9: слайды заполняются целиком, порядок — перетаскиванием за ⋮⋮, проще «Вид» слайда, «💾 Сохранить» и «↺ Начать заново», градиент в фигурах, у своего шаблона — выбор слайдов и цветов.', false, 10000);
   }
   function start() {
     closeAllSheets();
@@ -555,6 +562,7 @@ const Tour = (() => {
     $('.tour-back', root).classList.toggle('hidden', i === 0);
     $('.tour-skip', root).classList.toggle('hidden', i === n - 1 || i > 0);
     $('.tour-next', root).textContent = i === n - 1 ? 'Начать работу' : (i === 0 ? 'Показать' : 'Далее');
+    if (e) Materials.unfoldFor(e);                   // свёрнутая карточка — развернуть (1.9)
     if (e && !e.closest('#tabbar, .appbar, .cta')) {
       const r = e.getBoundingClientRect();
       if (r.top < 80 || r.bottom > innerHeight * 0.55) e.scrollIntoView({block: 'start'});
